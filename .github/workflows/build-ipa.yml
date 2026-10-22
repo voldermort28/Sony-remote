@@ -37,6 +37,7 @@ jobs:
       - name: Generate iOS Native Project
         run: |
           EXPO_NO_TELEMETRY=1 npx expo prebuild --platform ios --no-install
+          
           # Fix NODE_BINARY for Xcode script phases in CI
           echo "export NODE_BINARY=$(which node)" > ios/.xcode.env.local
           
@@ -70,41 +71,55 @@ jobs:
           sed -i.bak 's/CODE_SIGN_IDENTITY = "iPhone Developer";/CODE_SIGN_IDENTITY = "";/g' ios/SonyBraviaRemote.xcodeproj/project.pbxproj || true
           echo "Updated project.pbxproj signing identities."
 
-      - name: Build iOS Release (Unsigned for TrollStore)
+      - name: Archive iOS App (Unsigned for TrollStore)
         run: |
+          set -o pipefail
           mkdir -p build dist
           
-          echo "Building SonyBraviaRemote.xcworkspace with xcodebuild..."
-          xcodebuild -workspace ios/SonyBraviaRemote.xcworkspace \
+          echo "Archiving SonyBraviaRemote with xcodebuild archive..."
+          xcodebuild archive \
+                     -workspace ios/SonyBraviaRemote.xcworkspace \
                      -scheme SonyBraviaRemote \
                      -configuration Release \
                      -destination 'generic/platform=iOS' \
-                     -derivedDataPath build \
+                     -archivePath build/SonyRemote.xcarchive \
                      CODE_SIGNING_ALLOWED=NO \
                      CODE_SIGNING_REQUIRED=NO \
                      CODE_SIGN_IDENTITY="" \
                      "CODE_SIGN_IDENTITY[sdk=iphoneos*]=" \
                      PROVISIONING_PROFILE_SPECIFIER="" \
-                     DEVELOPMENT_TEAM="" 2>&1 | tee xcodebuild.log || {
-                       echo "::error::Build failed! Check Step Summary for full log."
-                       echo "### ❌ Xcodebuild Build Failure Log" >> $GITHUB_STEP_SUMMARY
-                       echo '```' >> $GITHUB_STEP_SUMMARY
-                       tail -n 120 xcodebuild.log >> $GITHUB_STEP_SUMMARY
-                       echo '```' >> $GITHUB_STEP_SUMMARY
-                       exit 1
-                     }
+                     DEVELOPMENT_TEAM="" 2>&1 | tee xcodebuild.log
 
       - name: Package IPA
         run: |
-          mkdir Payload
-          APP_PATH=$(find build/Build/Products/Release-iphoneos -name "*.app" -maxdepth 1 | head -n 1)
+          mkdir -p Payload dist
+          
+          # Locate the .app in xcarchive
+          APP_PATH=$(find build/SonyRemote.xcarchive/Products/Applications -name "*.app" -maxdepth 1 | head -n 1)
           if [ -z "$APP_PATH" ]; then
-            echo "Error: No .app found in build output!"
+            echo "Searching in build/Build/Products..."
+            APP_PATH=$(find build -name "*.app" | grep -v "Pods" | head -n 1)
+          fi
+          
+          if [ -z "$APP_PATH" ]; then
+            echo "❌ Error: No .app bundle found!"
             find build -name "*.app"
             exit 1
           fi
+          
           echo "Found app at: $APP_PATH"
-          cp -r "$APP_PATH" Payload/
+          cp -R "$APP_PATH" Payload/
+          
+          # Verify Info.plist exists inside the bundle
+          if [ ! -f Payload/*.app/Info.plist ]; then
+            echo "❌ Error: Info.plist is missing from app bundle!"
+            ls -la Payload/
+            ls -la Payload/*.app/
+            exit 1
+          fi
+          
+          echo "✅ Info.plist verified inside app bundle:"
+          ls -la Payload/*.app/Info.plist
           
           # Ad-hoc sign for TrollStore compatibility
           codesign --force --deep --sign - Payload/*.app || true
