@@ -25,33 +25,51 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Generate iOS Native Project
-        run: npx expo prebuild --platform ios --clean
+      - name: Generate iOS Native Project & Pods
+        run: |
+          npx expo prebuild --platform ios --clean
+          cd ios
+          pod install
+          cd ..
+          ls -la ios
 
       - name: Build iOS Release (Unsigned for TrollStore)
         run: |
-          WORKSPACE=$(find ios -name "*.xcworkspace" -maxdepth 1 | head -n 1)
-          SCHEME=$(basename "$WORKSPACE" .xcworkspace)
-          echo "Building scheme $SCHEME from $WORKSPACE..."
-          
           mkdir -p build dist
-          xcodebuild -workspace "$WORKSPACE" \
-                     -scheme "$SCHEME" \
+          
+          if [ -d "ios/SonyBraviaRemote.xcworkspace" ]; then
+            TARGET="-workspace ios/SonyBraviaRemote.xcworkspace"
+          else
+            TARGET="-project ios/SonyBraviaRemote.xcodeproj"
+          fi
+          
+          echo "Building with $TARGET..."
+          xcodebuild $TARGET \
+                     -scheme SonyBraviaRemote \
                      -configuration Release \
-                     -sdk iphoneos \
+                     -destination 'generic/platform=iOS' \
                      -derivedDataPath build \
                      CODE_SIGNING_ALLOWED=NO \
                      CODE_SIGNING_REQUIRED=NO \
                      CODE_SIGN_IDENTITY="" \
+                     PROVISIONING_PROFILE_SPECIFIER="" \
+                     DEVELOPMENT_TEAM="" \
                      AD_HOC_CODE_SIGNING_ALLOWED=YES
 
       - name: Package IPA
         run: |
           mkdir Payload
-          cp -r build/Build/Products/Release-iphoneos/*.app Payload/
+          APP_PATH=$(find build/Build/Products/Release-iphoneos -name "*.app" -maxdepth 1 | head -n 1)
+          if [ -z "$APP_PATH" ]; then
+            echo "Error: No .app found in build output!"
+            find build -name "*.app"
+            exit 1
+          fi
+          echo "Found app at: $APP_PATH"
+          cp -r "$APP_PATH" Payload/
           zip -q -r dist/SonyRemote.ipa Payload
           rm -rf Payload
-          echo "IPA created successfully."
+          echo "IPA created successfully at dist/SonyRemote.ipa"
           ls -lh dist/SonyRemote.ipa
 
       - name: Upload IPA Artifact
