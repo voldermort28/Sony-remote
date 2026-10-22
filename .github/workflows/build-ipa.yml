@@ -37,6 +37,24 @@ jobs:
       - name: Generate iOS Native Project
         run: |
           EXPO_NO_TELEMETRY=1 npx expo prebuild --platform ios --no-install
+          # Fix NODE_BINARY for Xcode script phases in CI
+          echo "export NODE_BINARY=$(which node)" > ios/.xcode.env.local
+          
+          # Disable code signing in all Pods targets
+          ruby -e "
+          file = 'ios/Podfile'
+          content = File.read(file)
+          patch = %Q{
+              installer.pods_project.targets.each do |target|
+                target.build_configurations.each do |config|
+                  config.build_settings['CODE_SIGNING_ALLOWED'] = 'NO'
+                  config.build_settings['CODE_SIGN_IDENTITY'] = ''
+                end
+              end
+          }
+          content.gsub!('react_native_post_install(', patch + 'react_native_post_install(')
+          File.write(file, content)
+          "
           ls -la ios
 
       - name: Install CocoaPods
@@ -48,7 +66,8 @@ jobs:
       - name: Configure Unsigned Build Settings
         run: |
           # Remove conditional iPhone Developer signing requirement
-          sed -i.bak 's/"CODE_SIGN_IDENTITY\[sdk=iphoneos\*\]" = "iPhone Developer";/"CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "";/g' ios/SonyBraviaRemote.xcodeproj/project.pbxproj
+          sed -i.bak 's/"CODE_SIGN_IDENTITY\[sdk=iphoneos\*\]" = "iPhone Developer";/"CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "";/g' ios/SonyBraviaRemote.xcodeproj/project.pbxproj || true
+          sed -i.bak 's/CODE_SIGN_IDENTITY = "iPhone Developer";/CODE_SIGN_IDENTITY = "";/g' ios/SonyBraviaRemote.xcodeproj/project.pbxproj || true
           echo "Updated project.pbxproj signing identities."
 
       - name: Build iOS Release (Unsigned for TrollStore)
@@ -66,7 +85,14 @@ jobs:
                      CODE_SIGN_IDENTITY="" \
                      "CODE_SIGN_IDENTITY[sdk=iphoneos*]=" \
                      PROVISIONING_PROFILE_SPECIFIER="" \
-                     DEVELOPMENT_TEAM=""
+                     DEVELOPMENT_TEAM="" 2>&1 | tee xcodebuild.log || {
+                       echo "::error::Build failed! Check Step Summary for full log."
+                       echo "### ❌ Xcodebuild Build Failure Log" >> $GITHUB_STEP_SUMMARY
+                       echo '```' >> $GITHUB_STEP_SUMMARY
+                       tail -n 120 xcodebuild.log >> $GITHUB_STEP_SUMMARY
+                       echo '```' >> $GITHUB_STEP_SUMMARY
+                       exit 1
+                     }
 
       - name: Package IPA
         run: |
