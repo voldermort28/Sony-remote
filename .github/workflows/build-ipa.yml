@@ -24,8 +24,6 @@ jobs:
 
       - name: Select Xcode
         run: |
-          echo "Available Xcode installations:"
-          ls -d /Applications/Xcode*.app || true
           XCODE_PATH=$(ls -d /Applications/Xcode*.app | sort -V | tail -n 1)
           if [ -n "$XCODE_PATH" ]; then
             echo "Selecting $XCODE_PATH..."
@@ -42,21 +40,16 @@ jobs:
           ls -la ios
 
       - name: Install CocoaPods
-        id: cocoapods
         run: |
           cd ios
-          pod install --repo-update 2>&1 | tee ../pod_install.log
+          pod install --repo-update
           cd ..
 
-      - name: Upload Debug Log if Pod Install Fails
-        if: failure()
+      - name: Configure Unsigned Build Settings
         run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git checkout -b build-logs
-          git add -f pod_install.log 2>/dev/null || true
-          git commit -m "chore: save pod_install.log for debugging" || true
-          git push -f origin build-logs || true
+          # Remove conditional iPhone Developer signing requirement
+          sed -i.bak 's/"CODE_SIGN_IDENTITY\[sdk=iphoneos\*\]" = "iPhone Developer";/"CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "";/g' ios/SonyBraviaRemote.xcodeproj/project.pbxproj
+          echo "Updated project.pbxproj signing identities."
 
       - name: Build iOS Release (Unsigned for TrollStore)
         run: |
@@ -71,9 +64,9 @@ jobs:
                      CODE_SIGNING_ALLOWED=NO \
                      CODE_SIGNING_REQUIRED=NO \
                      CODE_SIGN_IDENTITY="" \
+                     "CODE_SIGN_IDENTITY[sdk=iphoneos*]=" \
                      PROVISIONING_PROFILE_SPECIFIER="" \
-                     DEVELOPMENT_TEAM="" \
-                     AD_HOC_CODE_SIGNING_ALLOWED=YES
+                     DEVELOPMENT_TEAM=""
 
       - name: Package IPA
         run: |
@@ -86,6 +79,10 @@ jobs:
           fi
           echo "Found app at: $APP_PATH"
           cp -r "$APP_PATH" Payload/
+          
+          # Ad-hoc sign for TrollStore compatibility
+          codesign --force --deep --sign - Payload/*.app || true
+          
           zip -q -r dist/SonyRemote.ipa Payload
           rm -rf Payload
           echo "IPA created successfully at dist/SonyRemote.ipa"
