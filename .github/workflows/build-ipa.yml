@@ -5,6 +5,9 @@ on:
     branches: [ master, main ]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     name: Build SonyRemote.ipa
@@ -18,7 +21,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: 'npm'
 
       - name: Install dependencies
         run: npm install
@@ -58,3 +60,17 @@ jobs:
           name: SonyRemote-TrollStore-IPA
           path: dist/SonyRemote.ipa
           retention-days: 14
+
+      - name: Create GitHub Release with IPA
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.${{ github.run_number }}
+          name: "Sony Bravia Remote v1.0.${{ github.run_number }} (TrollStore IPA)"
+          body: |
+            ### 📱 Sony BRAVIA Remote cho iOS (TrollStore)
+            - **Tải file `SonyRemote.ipa` bên dưới**, mở bằng **TrollStore** để cài đặt trực tiếp.
+            - Tối ưu cho TV Sony BRAVIA KD-49X7500H.
+            - Hỗ trợ Trackpad cảm ứng, Quick App Launcher, Đồng bộ Clipboard và Phím cứng âm lượng.
+          files: dist/SonyRemote.ipa
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
