@@ -20,31 +20,39 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 20
+
+      - name: Select Xcode
+        run: |
+          if [ -d "/Applications/Xcode_15.4.app" ]; then
+            sudo xcode-select -s /Applications/Xcode_15.4.app
+          elif [ -d "/Applications/Xcode_16.0.app" ]; then
+            sudo xcode-select -s /Applications/Xcode_16.0.app
+          fi
+          echo "Selected Xcode:"
+          xcodebuild -version
 
       - name: Install dependencies
         run: npm install
 
-      - name: Generate iOS Native Project & Pods
+      - name: Generate iOS Native Project
         run: |
-          npx expo prebuild --platform ios --clean
-          cd ios
-          pod install
-          cd ..
+          EXPO_NO_TELEMETRY=1 npx expo prebuild --platform ios --no-install
           ls -la ios
+
+      - name: Install CocoaPods
+        run: |
+          cd ios
+          pod install --repo-update
+          ls -la
+          cd ..
 
       - name: Build iOS Release (Unsigned for TrollStore)
         run: |
           mkdir -p build dist
           
-          if [ -d "ios/SonyBraviaRemote.xcworkspace" ]; then
-            TARGET="-workspace ios/SonyBraviaRemote.xcworkspace"
-          else
-            TARGET="-project ios/SonyBraviaRemote.xcodeproj"
-          fi
-          
-          echo "Building with $TARGET..."
-          xcodebuild $TARGET \
+          echo "Building SonyBraviaRemote.xcworkspace with xcodebuild..."
+          xcodebuild -workspace ios/SonyBraviaRemote.xcworkspace \
                      -scheme SonyBraviaRemote \
                      -configuration Release \
                      -destination 'generic/platform=iOS' \
