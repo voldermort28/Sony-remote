@@ -64,6 +64,16 @@ jobs:
           pod install --repo-update
           cd ..
 
+      - name: Pre-build ExpoModulesJSI (Unsigned)
+        run: |
+          echo "Patching build-xcframework.sh to allow unsigned SPM build..."
+          sed -i.bak 's/SWIFT_ENABLE_EXPLICIT_MODULES=NO/SWIFT_ENABLE_EXPLICIT_MODULES=NO CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO/g' node_modules/expo-modules-jsi/apple/scripts/build-xcframework.sh
+          sed -i.bak 's/-quiet//g' node_modules/expo-modules-jsi/apple/scripts/build-xcframework.sh
+          
+          export PODS_ROOT="$(pwd)/ios/Pods"
+          export PLATFORM_NAME="iphoneos"
+          bash node_modules/expo-modules-jsi/apple/scripts/build-xcframework.sh
+
       - name: Configure Unsigned Build Settings
         run: |
           # Remove conditional iPhone Developer signing requirement
@@ -89,18 +99,6 @@ jobs:
                      "CODE_SIGN_IDENTITY[sdk=iphoneos*]=" \
                      PROVISIONING_PROFILE_SPECIFIER="" \
                      DEVELOPMENT_TEAM="" 2>&1 | tee xcodebuild.log
-
-      - name: Save Error Log on Failure
-        if: failure()
-        run: |
-          tail -n 120 xcodebuild.log
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git checkout -b build-logs || git checkout build-logs
-          tail -n 300 xcodebuild.log > xcode_error.txt
-          git add -f xcode_error.txt
-          git commit -m "chore: save xcode build error"
-          git push -f origin build-logs
 
       - name: Package IPA
         run: |
