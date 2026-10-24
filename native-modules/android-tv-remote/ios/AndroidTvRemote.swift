@@ -166,7 +166,7 @@ class AndroidTvRemote: RCTEventEmitter {
         }
       }
 
-      self.remoteManager?.connect(cleanHost, timeout: 8)
+      self.remoteManager?.connect(cleanHost)
     }
   }
 
@@ -187,7 +187,7 @@ class AndroidTvRemote: RCTEventEmitter {
             ])
           }
         case .successPaired:
-          self.remoteManager?.connect(host, timeout: 10)
+          self.remoteManager?.connect(host)
           self.queue.asyncAfter(deadline: .now() + 2.5) { [weak self] in
             guard let self = self else { return }
             if self.pairingResolver != nil {
@@ -207,7 +207,7 @@ class AndroidTvRemote: RCTEventEmitter {
           }
           if self.pairingResolver != nil {
             // Even if SecretResponse had a varint split, test connecting on port 6466 before failing
-            self.remoteManager?.connect(host, timeout: 8)
+            self.remoteManager?.connect(host)
             self.queue.asyncAfter(deadline: .now() + 2.5) { [weak self] in
               guard let self = self else { return }
               if self.pairingResolver != nil {
@@ -224,7 +224,7 @@ class AndroidTvRemote: RCTEventEmitter {
       }
     }
 
-    pairingManager?.connect(host, "SonyBraviaRemote", "iPhone Remote", timeout: 10)
+    pairingManager?.connect(host, "SonyBraviaRemote", "iPhone Remote")
   }
 
   @objc func sendPairingCode(
@@ -388,7 +388,7 @@ class AndroidTvRemote: RCTEventEmitter {
       }
 
       if !self.isPairedAndConnected && !self.currentHost.isEmpty {
-        self.remoteManager?.connect(self.currentHost, timeout: 6)
+        self.remoteManager?.connect(self.currentHost)
         self.queue.asyncAfter(deadline: .now() + 0.6) { [weak self] in
           self?.remoteManager?.send(KeyPress(mappedKey))
           resolve(["success": true])
