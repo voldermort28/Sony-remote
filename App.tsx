@@ -19,6 +19,8 @@ import { SettingsModal } from './src/components/SettingsModal';
 import {
   sendIrcc,
   checkTvConnection,
+  requestTvPairing,
+  setCachedAuthCookie,
   getTvApps,
   launchTvApp,
   sendTextToTv,
@@ -48,6 +50,9 @@ export default function App() {
   useEffect(() => {
     (async () => {
       const saved = await loadSettings();
+      if (saved.authCookie) {
+        setCachedAuthCookie(saved.authCookie);
+      }
       setSettings(saved);
 
       if (saved.tvIp) {
@@ -83,18 +88,30 @@ export default function App() {
       setConnectionState({
         isConnected: false,
         isChecking: false,
+        needsPinPairing: false,
         lastError: 'Vui lòng nhập địa chỉ IP của TV',
       });
       return;
     }
 
-    setConnectionState((prev) => ({ ...prev, isChecking: true, lastError: undefined }));
+    setConnectionState((prev) => ({
+      ...prev,
+      isChecking: true,
+      needsPinPairing: false,
+      lastError: undefined,
+    }));
     const result = await checkTvConnection(ip, psk);
 
     if (result.success) {
+      if (result.cookie) {
+        const updated = { ...settings, tvIp: ip.trim(), authCookie: result.cookie };
+        setSettings(updated);
+        await saveSettings(updated);
+      }
       setConnectionState({
         isConnected: true,
         isChecking: false,
+        needsPinPairing: false,
         tvModel: result.model,
       });
       // Preload apps list if successful
@@ -103,8 +120,41 @@ export default function App() {
       setConnectionState({
         isConnected: false,
         isChecking: false,
+        needsPinPairing: result.needsPinPairing,
+        tvModel: result.model,
         lastError: result.error,
       });
+    }
+  };
+
+  // Submit 4-digit PIN displayed on Sony TV screen
+  const handleSubmitPin = async (ip: string, pin: string) => {
+    setConnectionState((prev) => ({ ...prev, isChecking: true, lastError: undefined }));
+    const pairResult = await requestTvPairing(ip, pin);
+    if (pairResult.paired) {
+      const updated = {
+        ...settings,
+        tvIp: ip.trim(),
+        authCookie: pairResult.cookie || settings.authCookie,
+      };
+      setSettings(updated);
+      await saveSettings(updated);
+      setConnectionState((prev) => ({
+        ...prev,
+        isConnected: true,
+        isChecking: false,
+        needsPinPairing: false,
+        lastError: undefined,
+      }));
+      fetchApps(ip, settings.psk);
+    } else {
+      setConnectionState((prev) => ({
+        ...prev,
+        isConnected: false,
+        isChecking: false,
+        needsPinPairing: true,
+        lastError: pairResult.error,
+      }));
     }
   };
 
@@ -333,6 +383,7 @@ export default function App() {
         onClose={() => setSettingsVisible(false)}
         onSave={handleSaveSettings}
         onTestConnection={(ip, psk) => testTvConnection(ip, psk)}
+        onSubmitPin={(ip, pin) => handleSubmitPin(ip, pin)}
       />
     </SafeAreaView>
   );

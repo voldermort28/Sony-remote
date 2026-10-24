@@ -1,6 +1,7 @@
 export interface AppSettings {
   tvIp: string;
   psk: string;
+  authCookie?: string;
   hardwareVolumeEnabled: boolean;
   hapticFeedbackEnabled: boolean;
   companionPort: number;
@@ -18,6 +19,7 @@ export type TabType = 'remote' | 'trackpad' | 'apps' | 'numpad' | 'text' | 'sett
 export interface ConnectionState {
   isConnected: boolean;
   isChecking: boolean;
+  needsPinPairing?: boolean;
   lastError?: string;
   tvModel?: string;
 }

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   StyleSheet,
   View,
@@ -10,9 +10,23 @@ import {
   Switch,
   ActivityIndicator,
 } from 'react-native';
-import { Settings, Wifi, ShieldCheck, CheckCircle2, AlertTriangle, X, Volume2, Vibrate, Info } from 'lucide-react-native';
+import {
+  Settings,
+  Wifi,
+  ShieldCheck,
+  CheckCircle2,
+  AlertTriangle,
+  X,
+  Volume2,
+  Vibrate,
+  Info,
+  KeyRound,
+  ChevronDown,
+  ChevronUp,
+} from 'lucide-react-native';
 import { AppSettings, ConnectionState } from '../types';
 import { triggerHaptic } from '../services/haptics';
+import { normalizeIp } from '../services/sonyApi';
 
 interface SettingsModalProps {
   visible: boolean;
@@ -21,6 +35,7 @@ interface SettingsModalProps {
   onClose: () => void;
   onSave: (newSettings: AppSettings) => void;
   onTestConnection: (ip: string, psk: string) => Promise<void>;
+  onSubmitPin: (ip: string, pin: string) => Promise<void>;
 }
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
@@ -30,17 +45,46 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onClose,
   onSave,
   onTestConnection,
+  onSubmitPin,
 }) => {
   const [ip, setIp] = useState(settings.tvIp);
   const [psk, setPsk] = useState(settings.psk);
+  const [pinCode, setPinCode] = useState('');
+  const [showAdvancedPsk, setShowAdvancedPsk] = useState(false);
   const [hardwareVolume, setHardwareVolume] = useState(settings.hardwareVolumeEnabled);
   const [haptic, setHaptic] = useState(settings.hapticFeedbackEnabled);
 
+  useEffect(() => {
+    if (visible) {
+      setIp(settings.tvIp);
+      setPsk(settings.psk);
+      setHardwareVolume(settings.hardwareVolumeEnabled);
+      setHaptic(settings.hapticFeedbackEnabled);
+    }
+  }, [visible, settings]);
+
+  // Tự động biến dấu phẩy (,) trên bàn phím số iOS tiếng Việt thành dấu chấm (.)
+  const handleIpChange = (text: string) => {
+    const converted = text.replace(/,/g, '.').replace(/[^0-9.]/g, '');
+    setIp(converted);
+  };
+
+  const handleInsertDot = () => {
+    triggerHaptic(haptic, 'light');
+    setIp((prev) => (prev.endsWith('.') ? prev : prev + '.'));
+  };
+
+  const handleQuickPrefix = (prefix: string) => {
+    triggerHaptic(haptic, 'light');
+    setIp(prefix);
+  };
+
   const handleSaveAndClose = () => {
     triggerHaptic(haptic, 'medium');
+    const cleanIp = normalizeIp(ip);
     onSave({
       ...settings,
-      tvIp: ip.trim(),
+      tvIp: cleanIp,
       psk: psk.trim(),
       hardwareVolumeEnabled: hardwareVolume,
       hapticFeedbackEnabled: haptic,
@@ -56,73 +100,124 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           <View style={styles.header}>
             <View style={styles.titleRow}>
               <Settings size={22} color="#38BDF8" style={{ marginRight: 8 }} />
-              <Text style={styles.title}>Cài Đặt Kết Nối TV</Text>
+              <Text style={styles.title}>Kết Nối TV Bằng Địa Chỉ IP</Text>
             </View>
             <TouchableOpacity style={styles.closeBtn} onPress={onClose}>
               <X size={20} color="#94A3B8" />
             </TouchableOpacity>
           </View>
 
-          <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
+          <ScrollView
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={styles.scroll}
+            keyboardShouldPersistTaps="handled"
+          >
             {/* IP Address Field */}
             <View style={styles.fieldGroup}>
-              <Text style={styles.label}>ĐỊA CHỈ IP CỦA TV</Text>
+              <Text style={styles.label}>NHẬP ĐỊA CHỈ IP CỦA TV SONY</Text>
               <View style={styles.inputWrapper}>
-                <Wifi size={18} color="#64748B" style={styles.inputIcon} />
+                <Wifi size={18} color="#38BDF8" style={styles.inputIcon} />
                 <TextInput
                   style={styles.input}
                   placeholder="Ví dụ: 192.168.1.150"
                   placeholderTextColor="#64748B"
                   value={ip}
-                  onChangeText={setIp}
-                  keyboardType="numeric"
+                  onChangeText={handleIpChange}
+                  keyboardType="decimal-pad"
                   autoCapitalize="none"
                   autoCorrect={false}
                 />
+                {ip.length > 0 && (
+                  <TouchableOpacity
+                    style={styles.clearInlineBtn}
+                    onPress={() => {
+                      triggerHaptic(haptic, 'light');
+                      setIp('');
+                    }}
+                  >
+                    <X size={16} color="#94A3B8" />
+                  </TouchableOpacity>
+                )}
               </View>
+
+              {/* Thanh phím tắt dấu chấm (.) và dải IP nhanh cho bàn phím iOS */}
+              <View style={styles.quickIpRow}>
+                <TouchableOpacity style={styles.dotBtn} onPress={handleInsertDot}>
+                  <Text style={styles.dotBtnText}>+ Dấu chấm ( . )</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.prefixChip}
+                  onPress={() => handleQuickPrefix('192.168.1.')}
+                >
+                  <Text style={styles.prefixChipText}>192.168.1.</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.prefixChip}
+                  onPress={() => handleQuickPrefix('192.168.0.')}
+                >
+                  <Text style={styles.prefixChipText}>192.168.0.</Text>
+                </TouchableOpacity>
+              </View>
+
               <Text style={styles.helperText}>
-                Xem tại: Cài đặt TV → Mạng & Internet → Trạng thái mạng.
+                💡 Mẹo: Nếu bàn phím iPhone chỉ có dấu phẩy (,), bạn cứ bấm dấu (,) ứng dụng sẽ tự động chuyển thành dấu chấm (.)!
               </Text>
             </View>
 
-            {/* Pre-Shared Key (PSK) Field */}
-            <View style={styles.fieldGroup}>
-              <Text style={styles.label}>PRE-SHARED KEY (PSK)</Text>
-              <View style={styles.inputWrapper}>
-                <ShieldCheck size={18} color="#64748B" style={styles.inputIcon} />
-                <TextInput
-                  style={styles.input}
-                  placeholder="Ví dụ: 1234"
-                  placeholderTextColor="#64748B"
-                  value={psk}
-                  onChangeText={setPsk}
-                  secureTextEntry={false}
-                  autoCapitalize="none"
-                />
-              </View>
-              <Text style={styles.helperText}>
-                Mật khẩu bạn tự đặt tại mục "IP Control" trên TV Sony (mặc định nên là 1234).
-              </Text>
-            </View>
-
-            {/* Connection Test Button & Status */}
+            {/* Connection Test Button */}
             <TouchableOpacity
               style={[styles.testBtn, connectionState.isChecking && { opacity: 0.6 }]}
               disabled={connectionState.isChecking}
               onPress={() => {
                 triggerHaptic(haptic, 'light');
-                onTestConnection(ip, psk);
+                onTestConnection(normalizeIp(ip), psk);
               }}
             >
               {connectionState.isChecking ? (
                 <ActivityIndicator size="small" color="#0F172A" />
               ) : (
-                <Text style={styles.testBtnText}>Kiểm tra kết nối ngay</Text>
+                <Text style={styles.testBtnText}>Kết nối thử với TV ngay</Text>
               )}
             </TouchableOpacity>
 
+            {/* Nếu TV hiện mã PIN 4 số trên màn hình lần đầu ghép nối */}
+            {connectionState.needsPinPairing && (
+              <View style={styles.pinBox}>
+                <View style={styles.pinHeader}>
+                  <KeyRound size={18} color="#FBBF24" style={{ marginRight: 8 }} />
+                  <Text style={styles.pinTitle}>Nhập mã PIN 4 số trên màn hình TV</Text>
+                </View>
+                <Text style={styles.pinDesc}>
+                  TV Sony vừa hiện một mã PIN gồm 4 chữ số trên màn hình. Hãy nhập mã đó vào đây để ghép nối (chỉ cần làm 1 lần đầu):
+                </Text>
+                <View style={styles.pinInputRow}>
+                  <TextInput
+                    style={styles.pinInput}
+                    placeholder="Nhập 4 số (VD: 1234)"
+                    placeholderTextColor="#64748B"
+                    value={pinCode}
+                    onChangeText={setPinCode}
+                    keyboardType="number-pad"
+                    maxLength={6}
+                  />
+                  <TouchableOpacity
+                    style={styles.pinSubmitBtn}
+                    disabled={connectionState.isChecking || !pinCode.trim()}
+                    onPress={() => {
+                      triggerHaptic(haptic, 'medium');
+                      onSubmitPin(normalizeIp(ip), pinCode.trim());
+                    }}
+                  >
+                    <Text style={styles.pinSubmitText}>Xác nhận</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )}
+
             {/* Status Report */}
-            {connectionState.lastError && (
+            {connectionState.lastError && !connectionState.needsPinPairing && (
               <View style={styles.errorBox}>
                 <AlertTriangle size={16} color="#EF4444" style={{ marginRight: 6 }} />
                 <Text style={styles.errorText}>{connectionState.lastError}</Text>
@@ -145,7 +240,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   <Volume2 size={18} color="#94A3B8" style={{ marginRight: 8 }} />
                   <View>
                     <Text style={styles.toggleLabel}>Phím âm lượng vật lý</Text>
-                    <Text style={styles.toggleDesc}>Dùng nút Volume +/- trên điện thoại chỉnh TV</Text>
+                    <Text style={styles.toggleDesc}>Dùng nút Volume +/- trên iPhone chỉnh TV</Text>
                   </View>
                 </View>
                 <Switch
@@ -173,25 +268,62 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               </View>
             </View>
 
-            {/* Setup Instructions on Sony TV */}
+            {/* Cách xem IP đơn giản trên TV Sony KD-49X7500H */}
             <View style={styles.instructionCard}>
               <View style={styles.instructionHeader}>
                 <Info size={16} color="#38BDF8" style={{ marginRight: 6 }} />
-                <Text style={styles.instructionTitle}>Hướng dẫn bật trên Sony KD-49X7500H:</Text>
+                <Text style={styles.instructionTitle}>Cách xem địa chỉ IP trên TV Sony KD-49X7500H:</Text>
               </View>
-              <Text style={styles.stepText}>1. Vào Cài đặt (Settings) trên TV Sony.</Text>
-              <Text style={styles.stepText}>2. Chọn Mạng & Internet → Thiết lập mạng gia đình.</Text>
-              <Text style={styles.stepText}>3. Chọn Điều khiển IP (IP Control).</Text>
-              <Text style={styles.stepText}>4. Bật Simple IP Control thành [Bật / ON].</Text>
-              <Text style={styles.stepText}>5. Xác thực (Authentication) → Chọn [Pre-Shared Key].</Text>
-              <Text style={styles.stepText}>6. Nhập Pre-Shared Key là: 1234 (hoặc số tùy ý).</Text>
+              <Text style={styles.stepText}>
+                1. Trên TV, mở <Text style={{ fontWeight: '700' }}>Cài đặt (Settings)</Text> → chọn <Text style={{ fontWeight: '700' }}>Mạng & Internet</Text>.
+              </Text>
+              <Text style={styles.stepText}>
+                2. Bấm vào chính <Text style={{ fontWeight: '700' }}>tên mạng Wi-Fi</Text> mà TV đang kết nối (hoặc mục Trạng thái mạng).
+              </Text>
+              <Text style={styles.stepText}>
+                3. Xem dòng <Text style={{ fontWeight: '700' }}>Địa chỉ IP (IP address)</Text> (thường có dạng 192.168.1.xxx) và nhập vào ô ở trên.
+              </Text>
+              <Text style={styles.stepText}>
+                4. Bấm <Text style={{ fontWeight: '700' }}>"Kết nối thử với TV ngay"</Text>. Nếu màn hình TV hiện mã PIN 4 số, nhập 4 số đó vào ứng dụng là hoàn tất!
+              </Text>
             </View>
+
+            {/* Tùy chọn nâng cao (PSK - Không bắt buộc) */}
+            <TouchableOpacity
+              style={styles.advancedToggle}
+              onPress={() => setShowAdvancedPsk(!showAdvancedPsk)}
+            >
+              <Text style={styles.advancedToggleText}>
+                Tùy chọn nâng cao: Mã PSK (Không bắt buộc)
+              </Text>
+              {showAdvancedPsk ? (
+                <ChevronUp size={16} color="#64748B" />
+              ) : (
+                <ChevronDown size={16} color="#64748B" />
+              )}
+            </TouchableOpacity>
+
+            {showAdvancedPsk && (
+              <View style={styles.fieldGroup}>
+                <View style={styles.inputWrapper}>
+                  <ShieldCheck size={18} color="#64748B" style={styles.inputIcon} />
+                  <TextInput
+                    style={styles.input}
+                    placeholder="Để trống nếu chỉ kết nối bằng IP / Mã PIN"
+                    placeholderTextColor="#64748B"
+                    value={psk}
+                    onChangeText={setPsk}
+                    autoCapitalize="none"
+                  />
+                </View>
+              </View>
+            )}
           </ScrollView>
 
           {/* Bottom Save Button */}
           <View style={styles.footer}>
             <TouchableOpacity style={styles.saveBtn} activeOpacity={0.7} onPress={handleSaveAndClose}>
-              <Text style={styles.saveBtnText}>Lưu Cài Đặt</Text>
+              <Text style={styles.saveBtnText}>Lưu & Bắt Đầu Sử Dụng</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -210,7 +342,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#0F172A',
     borderTopLeftRadius: 28,
     borderTopRightRadius: 28,
-    maxHeight: '90%',
+    maxHeight: '92%',
     borderWidth: 1,
     borderColor: '#1E293B',
   },
@@ -243,7 +375,7 @@ const styles = StyleSheet.create({
     paddingBottom: 20,
   },
   fieldGroup: {
-    marginBottom: 18,
+    marginBottom: 16,
   },
   label: {
     color: '#94A3B8',
@@ -258,7 +390,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#1E293B',
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: '#334155',
+    borderColor: '#38BDF8',
     paddingHorizontal: 14,
   },
   inputIcon: {
@@ -268,12 +400,47 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingVertical: 14,
     color: '#F8FAFC',
-    fontSize: 15,
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  clearInlineBtn: {
+    padding: 6,
+  },
+  quickIpRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 10,
+    gap: 8,
+    flexWrap: 'wrap',
+  },
+  dotBtn: {
+    backgroundColor: '#0284C7',
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    borderRadius: 10,
+  },
+  dotBtnText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  prefixChip: {
+    backgroundColor: '#1E293B',
+    borderWidth: 1,
+    borderColor: '#334155',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+  },
+  prefixChipText: {
+    color: '#BAE6FD',
+    fontSize: 12,
+    fontWeight: '600',
   },
   helperText: {
-    color: '#64748B',
+    color: '#94A3B8',
     fontSize: 11,
-    marginTop: 6,
+    marginTop: 8,
     lineHeight: 16,
   },
   testBtn: {
@@ -285,6 +452,60 @@ const styles = StyleSheet.create({
     marginBottom: 14,
   },
   testBtnText: {
+    color: '#0F172A',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  pinBox: {
+    backgroundColor: 'rgba(251, 191, 36, 0.12)',
+    borderWidth: 1,
+    borderColor: '#F59E0B',
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 16,
+  },
+  pinHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  pinTitle: {
+    color: '#FBBF24',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  pinDesc: {
+    color: '#FDE68A',
+    fontSize: 12,
+    lineHeight: 18,
+    marginBottom: 12,
+  },
+  pinInputRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  pinInput: {
+    flex: 1,
+    backgroundColor: '#0F172A',
+    borderWidth: 1,
+    borderColor: '#F59E0B',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    color: '#F8FAFC',
+    fontSize: 18,
+    fontWeight: '700',
+    letterSpacing: 3,
+    textAlign: 'center',
+  },
+  pinSubmitBtn: {
+    backgroundColor: '#F59E0B',
+    paddingHorizontal: 18,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pinSubmitText: {
     color: '#0F172A',
     fontSize: 14,
     fontWeight: '700',
@@ -326,7 +547,7 @@ const styles = StyleSheet.create({
     padding: 16,
     borderWidth: 1,
     borderColor: '#334155',
-    marginBottom: 20,
+    marginBottom: 18,
     gap: 16,
   },
   toggleRow: {
@@ -356,7 +577,7 @@ const styles = StyleSheet.create({
     padding: 16,
     borderWidth: 1,
     borderColor: '#0284C7',
-    marginBottom: 10,
+    marginBottom: 14,
   },
   instructionHeader: {
     flexDirection: 'row',
@@ -373,6 +594,18 @@ const styles = StyleSheet.create({
     fontSize: 12,
     lineHeight: 18,
     marginBottom: 4,
+  },
+  advancedToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 10,
+    paddingHorizontal: 4,
+  },
+  advancedToggleText: {
+    color: '#64748B',
+    fontSize: 12,
+    fontWeight: '600',
   },
   footer: {
     padding: 20,
