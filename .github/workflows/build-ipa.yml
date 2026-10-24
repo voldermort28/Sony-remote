@@ -2,7 +2,7 @@ name: Build TrollStore IPA
 
 on:
   push:
-    branches: [ master, main ]
+    branches: [ "main", "master" ]
   workflow_dispatch:
 
 permissions:
@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   build:
-    name: Build SonyRemote.ipa
+    name: Build SonyRemote.ipa (iOS 15.1+)
     runs-on: macos-15
 
     steps:
@@ -20,42 +20,39 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 20
 
-      - name: Select Latest Xcode
+      - name: Select Xcode
         run: |
-          XCODE_PATH=$(ls -d /Applications/Xcode*.app | sort -V | tail -n 1)
-          if [ -n "$XCODE_PATH" ]; then
-            echo "Selecting $XCODE_PATH..."
-            sudo xcode-select -s "$XCODE_PATH"
-            echo "DEVELOPER_DIR=$XCODE_PATH/Contents/Developer" >> $GITHUB_ENV
-          fi
           xcodebuild -version
 
-      - name: Install dependencies
+      - name: Install dependencies (Expo SDK 52 - iOS 15.1+)
         run: |
-          npm install
-          
-          # Patch ExpoModulesJSI for Xcode compatibility and unsigned build
-          sed -i.bak 's/swift-tools-version: 6.2/swift-tools-version: 6.0/g' node_modules/expo-modules-jsi/apple/Package.swift || true
-          sed -i.bak 's/SWIFT_ENABLE_EXPLICIT_MODULES=NO/SWIFT_ENABLE_EXPLICIT_MODULES=NO CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO/g' node_modules/expo-modules-jsi/apple/scripts/build-xcframework.sh || true
-          sed -i.bak 's/-quiet//g' node_modules/expo-modules-jsi/apple/scripts/build-xcframework.sh || true
-          echo "Patched ExpoModulesJSI scripts and package manifest."
+          rm -f package-lock.json
+          npm install --legacy-peer-deps
 
-      - name: Generate iOS Native Project
+          # Ensure VolumeManager UI initialization always runs on the main thread on iOS 15
+          if [ -f node_modules/react-native-volume-manager/ios/VolumeManager.m ]; then
+            sed -i.bak 's/\[self initVolumeView\];/dispatch_async(dispatch_get_main_queue(), ^{ [self initVolumeView]; });/g' node_modules/react-native-volume-manager/ios/VolumeManager.m || true
+            echo "Patched VolumeManager.m for safe main-thread initialization."
+          fi
+
+      - name: Generate iOS Native Project (Target iOS 15.1)
         run: |
-          EXPO_NO_TELEMETRY=1 npx expo prebuild --platform ios --no-install
-          
+          EXPO_NO_TELEMETRY=1 npx expo prebuild --platform ios --no-install --clean
+
           # Fix NODE_BINARY for Xcode script phases in CI
           echo "export NODE_BINARY=$(which node)" > ios/.xcode.env.local
-          
-          # Disable code signing in all Pods targets
+
+          # Force iOS 15.1 deployment target and disable code signing across all Pods
           ruby -e "
           file = 'ios/Podfile'
           content = File.read(file)
+          content.gsub!(/platform :ios,.*/, \"platform :ios, '15.1'\")
           patch = %Q{
               installer.pods_project.targets.each do |target|
                 target.build_configurations.each do |config|
+                  config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.1'
                   config.build_settings['CODE_SIGNING_ALLOWED'] = 'NO'
                   config.build_settings['CODE_SIGN_IDENTITY'] = ''
                 end
@@ -64,7 +61,7 @@ jobs:
           content.gsub!('react_native_post_install(', patch + 'react_native_post_install(')
           File.write(file, content)
           "
-          ls -la ios
+          cat ios/Podfile
 
       - name: Install CocoaPods
         run: |
@@ -72,25 +69,28 @@ jobs:
           pod install --repo-update
           cd ..
 
-      - name: Configure Unsigned Build Settings
+      - name: Configure Unsigned Build & iOS 15.1 Target
         run: |
           # Remove conditional iPhone Developer signing requirement
           sed -i.bak 's/"CODE_SIGN_IDENTITY\[sdk=iphoneos\*\]" = "iPhone Developer";/"CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "";/g' ios/SonyBraviaRemote.xcodeproj/project.pbxproj || true
           sed -i.bak 's/CODE_SIGN_IDENTITY = "iPhone Developer";/CODE_SIGN_IDENTITY = "";/g' ios/SonyBraviaRemote.xcodeproj/project.pbxproj || true
-          echo "Updated project.pbxproj signing identities."
+          # Enforce IPHONEOS_DEPLOYMENT_TARGET = 15.1 in main project
+          sed -i.bak 's/IPHONEOS_DEPLOYMENT_TARGET = [0-9.]*;/IPHONEOS_DEPLOYMENT_TARGET = 15.1;/g' ios/SonyBraviaRemote.xcodeproj/project.pbxproj || true
+          grep "IPHONEOS_DEPLOYMENT_TARGET" ios/SonyBraviaRemote.xcodeproj/project.pbxproj
 
-      - name: Archive iOS App (Unsigned for TrollStore)
+      - name: Archive iOS App (Unsigned for TrollStore iOS 15+)
         run: |
           set -o pipefail
           mkdir -p build dist
-          
-          echo "Archiving SonyBraviaRemote with xcodebuild archive..."
+
+          echo "Archiving SonyBraviaRemote with IPHONEOS_DEPLOYMENT_TARGET=15.1..."
           xcodebuild -workspace ios/SonyBraviaRemote.xcworkspace \
                      -scheme SonyBraviaRemote \
                      -configuration Release \
                      -destination 'generic/platform=iOS' \
                      archive \
                      -archivePath build/SonyRemote.xcarchive \
+                     IPHONEOS_DEPLOYMENT_TARGET=15.1 \
                      CODE_SIGNING_ALLOWED=NO \
                      CODE_SIGNING_REQUIRED=NO \
                      CODE_SIGN_IDENTITY="" \
@@ -98,40 +98,47 @@ jobs:
                      PROVISIONING_PROFILE_SPECIFIER="" \
                      DEVELOPMENT_TEAM="" 2>&1 | tee xcodebuild.log
 
-      - name: Package IPA
+      - name: Package & Sign IPA for TrollStore (iOS 15.5 Compatible)
         run: |
           mkdir -p Payload dist
-          
-          # Locate the .app in xcarchive
+
           APP_PATH=$(find build/SonyRemote.xcarchive/Products/Applications -name "*.app" -maxdepth 1 | head -n 1)
           if [ -z "$APP_PATH" ]; then
-            echo "Searching in build/Build/Products..."
             APP_PATH=$(find build -name "*.app" | grep -v "Pods" | head -n 1)
           fi
-          
+
           if [ -z "$APP_PATH" ]; then
             echo "❌ Error: No .app bundle found!"
-            find build -name "*.app"
             exit 1
           fi
-          
+
           echo "Found app at: $APP_PATH"
           cp -R "$APP_PATH" Payload/
-          
-          # Verify Info.plist exists inside the bundle
-          if [ ! -f Payload/*.app/Info.plist ]; then
+          APP_BUNDLE=$(ls -d Payload/*.app | head -n 1)
+
+          # Verify Info.plist & set MinimumOSVersion to 15.1
+          if [ ! -f "$APP_BUNDLE/Info.plist" ]; then
             echo "❌ Error: Info.plist is missing from app bundle!"
-            ls -la Payload/
-            ls -la Payload/*.app/
             exit 1
           fi
-          
-          echo "✅ Info.plist verified inside app bundle:"
-          ls -la Payload/*.app/Info.plist
-          
-          # Ad-hoc sign for TrollStore compatibility
-          codesign --force --deep --sign - Payload/*.app || true
-          
+
+          /usr/libexec/PlistBuddy -c "Set :MinimumOSVersion 15.1" "$APP_BUNDLE/Info.plist" || true
+          echo "✅ Verified MinimumOSVersion in Info.plist:"
+          /usr/libexec/PlistBuddy -c "Print :MinimumOSVersion" "$APP_BUNDLE/Info.plist"
+
+          echo "✅ Verified Mach-O LC_BUILD_VERSION (minos):"
+          otool -l "$APP_BUNDLE/SonyBraviaRemote" | grep -A 4 "LC_BUILD_VERSION" || true
+
+          echo "✅ Verified embedded JS bundle (main.jsbundle):"
+          ls -lh "$APP_BUNDLE/main.jsbundle"
+
+          # Ad-hoc sign all embedded frameworks/dylibs first, then the main app bundle
+          if [ -d "$APP_BUNDLE/Frameworks" ]; then
+            find "$APP_BUNDLE/Frameworks" -name "*.dylib" -exec codesign --force --sign - --timestamp=none {} \; || true
+            find "$APP_BUNDLE/Frameworks" -name "*.framework" -exec codesign --force --sign - --timestamp=none {} \; || true
+          fi
+          codesign --force --deep --sign - --timestamp=none "$APP_BUNDLE"
+
           zip -q -r dist/SonyRemote.ipa Payload
           rm -rf Payload
           echo "IPA created successfully at dist/SonyRemote.ipa"
@@ -148,9 +155,10 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v1.0.${{ github.run_number }}
-          name: "Sony Bravia Remote v1.0.${{ github.run_number }} (TrollStore IPA)"
+          name: "Sony Bravia Remote v1.0.${{ github.run_number }} (TrollStore iOS 15.1+ IPA)"
           body: |
-            ### 📱 Sony BRAVIA Remote cho iOS (TrollStore)
+            ### 📱 Sony BRAVIA Remote cho iOS 15.1+ (TrollStore)
+            - **Hỗ trợ iOS 15.1 trở lên (bao gồm iOS 15.5)** qua **TrollStore**.
             - **Tải file `SonyRemote.ipa` bên dưới**, mở bằng **TrollStore** để cài đặt trực tiếp.
             - Tối ưu cho TV Sony BRAVIA KD-49X7500H.
             - Hỗ trợ Trackpad cảm ứng, Quick App Launcher, Đồng bộ Clipboard và Phím cứng âm lượng.
