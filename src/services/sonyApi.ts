@@ -248,16 +248,34 @@ export async function checkTvConnection(
     return { success: false, error: 'Vui lòng nhập địa chỉ IP của TV' };
   }
 
+  // 0. Kiểm tra nhanh cổng 8008 (Eureka / Cast Info) để lấy tên TV thật (VD: "TV phòng khách")
+  let eurekaTvName = '';
+  try {
+    const eurekaRes = await fetchWithTimeout(
+      `http://${cleanIp}:8008/setup/eureka_info`,
+      { method: 'GET' },
+      2200
+    );
+    if (eurekaRes.ok) {
+      const eurekaJson = await eurekaRes.json();
+      if (eurekaJson && eurekaJson.name) {
+        eurekaTvName = `${eurekaJson.name} (Sony KD-49X7500H)`;
+      } else {
+        eurekaTvName = 'Sony BRAVIA KD-49X7500H';
+      }
+    }
+  } catch {}
+
   // 1. Thử kết nối qua giao thức gốc Android TV Remote v2 (Port 6466 / 6467) cho Sony KD-49X7500H
   const atvMod = getAndroidTvNativeModule();
-  if (atvMod && (!psk || !psk.trim())) {
+  if (atvMod) {
     try {
       const atvRes = await atvMod.connect(cleanIp);
       if (atvRes && atvRes.status === 'connected') {
         activeProtocol = 'androidtv';
         return {
           success: true,
-          model: atvRes.model || 'Sony BRAVIA KD-49X7500H',
+          model: eurekaTvName || atvRes.model || 'Sony BRAVIA KD-49X7500H',
         };
       }
       if (atvRes && atvRes.status === 'waiting_pin') {
@@ -265,12 +283,21 @@ export async function checkTvConnection(
         return {
           success: false,
           needsPinPairing: true,
-          model: atvRes.model || 'Sony BRAVIA KD-49X7500H',
+          model: eurekaTvName || atvRes.model || 'Sony BRAVIA KD-49X7500H',
           error:
             'Màn hình TV Sony vừa hiện mã ghép nối (6 ký tự chữ/số). Hãy nhập mã đó vào ô bên dưới để kết nối!',
         };
       }
     } catch {}
+  }
+
+  // Nếu cổng 8008 tìm thấy "TV phòng khách" nhưng cổng 6467 của TV từ chối bắt tay SSL (Alert 40)
+  if (eurekaTvName) {
+    return {
+      success: false,
+      model: eurekaTvName,
+      error: `Đã tìm thấy "${eurekaTvName}" tại ${cleanIp}, nhưng dịch vụ điều khiển trên TV đang bị kẹt chứng chỉ SSL. Trên TV, bạn vào: Cài đặt -> Ứng dụng -> Xem tất cả ứng dụng -> Hiển thị ứng dụng hệ thống -> chọn "Android TV Remote Service" -> bấm "Xóa dữ liệu (Clear data)", sau đó bấm Kết nối lại!`,
+    };
   }
 
   // 2. Thử kết nối qua cổng 80 (/sony/system) nếu TV hỗ trợ Bravia HTTP hoặc người dùng nhập PSK

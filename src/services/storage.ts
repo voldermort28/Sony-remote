@@ -4,7 +4,7 @@ import { AppSettings } from '../types';
 const SETTINGS_KEY = '@sony_remote_settings_v1';
 
 export const DEFAULT_SETTINGS: AppSettings = {
-  tvIp: '',
+  tvIp: '192.168.5.234',
   psk: '',
   authCookie: '',
   hardwareVolumeEnabled: true,
@@ -18,8 +18,8 @@ export async function loadSettings(): Promise<AppSettings> {
     const raw = await AsyncStorage.getItem(SETTINGS_KEY);
     if (!raw) return DEFAULT_SETTINGS;
     const parsed = JSON.parse(raw);
-    // Nếu chưa từng lưu IP mà psk đang là mặc định cũ '1234' thì chuyển về rỗng (chế độ chỉ dùng IP)
-    if (!parsed.tvIp && parsed.psk === '1234') {
+    // Xóa mã PSK mặc định cũ '1234' đã lưu từ bản cũ để không chặn kết nối Android TV
+    if (parsed.psk === '1234') {
       parsed.psk = '';
     }
     return { ...DEFAULT_SETTINGS, ...parsed };

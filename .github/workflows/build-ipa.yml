@@ -64,10 +64,21 @@ jobs:
           "
           cat ios/Podfile
 
+      - name: Cache CocoaPods & Xcode DerivedData
+        uses: actions/cache@v4
+        with:
+          path: |
+            ios/Pods
+            ~/Library/Caches/CocoaPods
+            build/DerivedData
+          key: ${{ runner.os }}-pods-derived-${{ hashFiles('package.json', 'native-modules/android-tv-remote/AndroidTvRemote.podspec') }}
+          restore-keys: |
+            ${{ runner.os }}-pods-derived-
+
       - name: Install CocoaPods
         run: |
           cd ios
-          pod install --repo-update
+          pod install || pod install --repo-update
           cd ..
 
       - name: Configure Unsigned Build & iOS 15.1 Target
@@ -89,6 +100,7 @@ jobs:
                      -scheme SonyBraviaRemote \
                      -configuration Release \
                      -destination 'generic/platform=iOS' \
+                     -derivedDataPath build/DerivedData \
                      archive \
                      -archivePath build/SonyRemote.xcarchive \
                      IPHONEOS_DEPLOYMENT_TARGET=15.1 \

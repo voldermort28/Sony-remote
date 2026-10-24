@@ -148,16 +148,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
                 <TouchableOpacity
                   style={styles.prefixChip}
-                  onPress={() => handleQuickPrefix('192.168.1.')}
+                  onPress={() => handleQuickPrefix('192.168.5.234')}
                 >
-                  <Text style={styles.prefixChipText}>192.168.1.</Text>
+                  <Text style={styles.prefixChipText}>192.168.5.234 (TV phòng khách)</Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity
                   style={styles.prefixChip}
-                  onPress={() => handleQuickPrefix('192.168.0.')}
+                  onPress={() => handleQuickPrefix('192.168.1.')}
                 >
-                  <Text style={styles.prefixChipText}>192.168.0.</Text>
+                  <Text style={styles.prefixChipText}>192.168.1.</Text>
                 </TouchableOpacity>
               </View>
 
