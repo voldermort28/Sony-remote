@@ -44,11 +44,12 @@ jobs:
           # Fix NODE_BINARY for Xcode script phases in CI
           echo "export NODE_BINARY=$(which node)" > ios/.xcode.env.local
 
-          # Force iOS 15.1 deployment target and disable code signing across all Pods
+          # Force iOS 15.1 deployment target, register AndroidTvRemote native module, and disable code signing across all Pods
           ruby -e "
           file = 'ios/Podfile'
           content = File.read(file)
           content.gsub!(/platform :ios,.*/, \"platform :ios, '15.1'\")
+          content.gsub!('use_expo_modules!', \"use_expo_modules!\\n  pod 'AndroidTvRemote', :path => '../native-modules/android-tv-remote'\")
           patch = %Q{
               installer.pods_project.targets.each do |target|
                 target.build_configurations.each do |config|

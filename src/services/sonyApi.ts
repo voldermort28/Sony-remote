@@ -1,3 +1,4 @@
+import { NativeModules } from 'react-native';
 import { SONY_IRCC_CODES, IrccKey } from '../constants/irccCodes';
 import { TvAppInfo } from '../types';
 
@@ -5,6 +6,66 @@ const CLIENT_ID = 'SonyBraviaRemote:iPhone';
 const CLIENT_NICKNAME = 'iPhone Remote (Sony BRAVIA)';
 
 let cachedAuthCookie = '';
+let activeProtocol: 'androidtv' | 'bravia_http' = 'androidtv';
+
+function getAndroidTvNativeModule(): any | null {
+  try {
+    return NativeModules?.AndroidTvRemote ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export const DEFAULT_ANDROID_TV_APPS: TvAppInfo[] = [
+  {
+    title: 'YouTube',
+    uri: 'https://www.youtube.com',
+  },
+  {
+    title: 'Netflix',
+    uri: 'https://www.netflix.com/title',
+  },
+  {
+    title: 'FPT Play',
+    uri: 'market://launch?id=com.fplay.activity',
+  },
+  {
+    title: 'VTV Go',
+    uri: 'market://launch?id=vn.vtv.vtvgoTV',
+  },
+  {
+    title: 'VieON',
+    uri: 'market://launch?id=vn.danet.vieon.tv',
+  },
+  {
+    title: 'TV360 (Viettel)',
+    uri: 'market://launch?id=com.viettel.tv360.tv',
+  },
+  {
+    title: 'Spotify',
+    uri: 'https://open.spotify.com',
+  },
+  {
+    title: 'Prime Video',
+    uri: 'https://app.primevideo.com',
+  },
+  {
+    title: 'Google Play Store',
+    uri: 'market://home',
+  },
+  {
+    title: 'Kodi',
+    uri: 'market://launch?id=org.xbmc.kodi',
+  },
+  {
+    title: 'VLC Media Player',
+    uri: 'market://launch?id=org.videolan.vlc',
+  },
+  {
+    title: 'Plex',
+    uri: 'market://launch?id=com.plexapp.android',
+  },
+];
 
 export function setCachedAuthCookie(cookie?: string) {
   if (cookie) {
@@ -55,16 +116,12 @@ function captureCookieFromResponse(response: Response): string | undefined {
   return undefined;
 }
 
-/**
- * Helper to execute fetch with timeout and cookie support
- */
-async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs = 4000): Promise<Response> {
+async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs = 3500): Promise<Response> {
   const controller = new AbortController();
   const id = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const response = await fetch(url, {
       ...options,
-      credentials: 'include',
       signal: controller.signal,
     });
     captureCookieFromResponse(response);
@@ -75,18 +132,42 @@ async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs = 4
 }
 
 /**
- * Gửi yêu cầu ghép nối (actRegister) chỉ cần IP.
- * Nếu TV chưa ghép nối với iPhone này, TV sẽ tự động hiện mã PIN 4 số lên màn hình TV.
+ * Gửi mã ghép nối (6 ký tự chữ/số hiển thị trên TV Android TV hoặc 4 số Bravia)
  */
 export async function requestTvPairing(
   tvIp: string,
   pin?: string
-): Promise<{ paired: boolean; needsPin?: boolean; cookie?: string; error?: string }> {
+): Promise<{ paired: boolean; needsPin?: boolean; cookie?: string; model?: string; error?: string }> {
   const cleanIp = normalizeIp(tvIp);
   if (!cleanIp) {
     return { paired: false, error: 'Vui lòng nhập địa chỉ IP của TV' };
   }
 
+  const atvMod = getAndroidTvNativeModule();
+  if (atvMod && pin && pin.trim() && activeProtocol === 'androidtv') {
+    try {
+      const res = await atvMod.sendPairingCode(pin.trim().toUpperCase());
+      if (res && res.success) {
+        return {
+          paired: true,
+          model: res.model || 'Sony BRAVIA KD-49X7500H',
+        };
+      }
+      return {
+        paired: false,
+        needsPin: true,
+        error: res?.error || 'Mã PIN không đúng hoặc đã hết hạn. Hãy bấm Kết nối thử lại để lấy mã mới.',
+      };
+    } catch (e: any) {
+      return {
+        paired: false,
+        needsPin: true,
+        error: e?.message || 'Lỗi xác thực mã PIN với TV',
+      };
+    }
+  }
+
+  // Fallback sang Sony Bravia /sony/accessControl nếu dùng HTTP Bravia
   const url = `http://${cleanIp}/sony/accessControl`;
   const payload = {
     method: 'actRegister',
@@ -123,22 +204,24 @@ export async function requestTvPairing(
         headers,
         body: JSON.stringify(payload),
       },
-      6000
+      5000
     );
 
     const newCookie = captureCookieFromResponse(response);
 
     if (response.ok) {
+      activeProtocol = 'bravia_http';
       return { paired: true, cookie: newCookie || cachedAuthCookie };
     }
 
     if (response.status === 401 || response.status === 403) {
+      activeProtocol = 'bravia_http';
       return {
         paired: false,
         needsPin: true,
         error: pin
-          ? 'Mã PIN không đúng hoặc đã hết hạn. Vui lòng nhập mã PIN 4 số mới trên TV.'
-          : 'TV đang hiển thị mã PIN 4 số trên màn hình. Hãy nhập mã đó vào ô bên dưới!',
+          ? 'Mã PIN không đúng. Vui lòng nhập lại mã PIN trên màn hình TV.'
+          : 'TV đang hiển thị mã PIN trên màn hình. Hãy nhập mã đó vào ô bên dưới!',
       };
     }
 
@@ -146,13 +229,106 @@ export async function requestTvPairing(
   } catch (e: any) {
     return {
       paired: false,
-      error: e.name === 'AbortError' ? 'Hết thời gian chờ phản hồi từ TV' : 'Không thể kết nối tới TV',
+      error: 'Không thể kết nối tới TV',
     };
   }
 }
 
 /**
- * Gửi lệnh IRCC qua giao thức SOAP XML tới TV Sony BRAVIA (Hỗ trợ cả IP-only Cookie và PSK)
+ * Kiểm tra kết nối tới TV Sony KD-49X7500H:
+ * 1. Ưu tiên giao thức Android TV Remote v2 (Cổng 6466 / 6467 — có sẵn trên mọi TV Sony KD-49X7500H không cần bật IP Control).
+ * 2. Tự động kiểm tra thêm cổng 8008 (Chromecast/DIAL) và cổng 80 (/sony/system) làm dự phòng.
+ */
+export async function checkTvConnection(
+  tvIp: string,
+  psk: string
+): Promise<{ success: boolean; model?: string; needsPinPairing?: boolean; cookie?: string; error?: string }> {
+  const cleanIp = normalizeIp(tvIp);
+  if (!cleanIp) {
+    return { success: false, error: 'Vui lòng nhập địa chỉ IP của TV' };
+  }
+
+  // 1. Thử kết nối qua giao thức gốc Android TV Remote v2 (Port 6466 / 6467) cho Sony KD-49X7500H
+  const atvMod = getAndroidTvNativeModule();
+  if (atvMod && (!psk || !psk.trim())) {
+    try {
+      const atvRes = await atvMod.connect(cleanIp);
+      if (atvRes && atvRes.status === 'connected') {
+        activeProtocol = 'androidtv';
+        return {
+          success: true,
+          model: atvRes.model || 'Sony BRAVIA KD-49X7500H',
+        };
+      }
+      if (atvRes && atvRes.status === 'waiting_pin') {
+        activeProtocol = 'androidtv';
+        return {
+          success: false,
+          needsPinPairing: true,
+          model: atvRes.model || 'Sony BRAVIA KD-49X7500H',
+          error:
+            'Màn hình TV Sony vừa hiện mã ghép nối (6 ký tự chữ/số). Hãy nhập mã đó vào ô bên dưới để kết nối!',
+        };
+      }
+    } catch {}
+  }
+
+  // 2. Thử kết nối qua cổng 80 (/sony/system) nếu TV hỗ trợ Bravia HTTP hoặc người dùng nhập PSK
+  try {
+    const response = await fetchWithTimeout(
+      `http://${cleanIp}/sony/system`,
+      {
+        method: 'POST',
+        headers: buildAuthHeaders(psk, {
+          'Content-Type': 'application/json',
+        }),
+        body: JSON.stringify({
+          method: 'getSystemInformation',
+          id: 1,
+          params: [],
+          version: '1.0',
+        }),
+      },
+      3000
+    );
+
+    if (response.ok || response.status === 401 || response.status === 403) {
+      activeProtocol = 'bravia_http';
+      let model = 'Sony BRAVIA KD-49X7500H';
+      try {
+        const data = await response.json();
+        if (data.result && data.result[0] && data.result[0].model) {
+          model = data.result[0].model;
+        }
+      } catch {}
+
+      if (!psk || !psk.trim()) {
+        const pairResult = await requestTvPairing(cleanIp);
+        if (pairResult.paired) {
+          return { success: true, model, cookie: pairResult.cookie };
+        }
+        if (pairResult.needsPin) {
+          return {
+            success: false,
+            model,
+            needsPinPairing: true,
+            error: pairResult.error,
+          };
+        }
+      }
+
+      return { success: true, model };
+    }
+  } catch {}
+
+  return {
+    success: false,
+    error: `Không tìm thấy TV tại IP ${cleanIp}. Hãy đảm bảo TV đang bật, cùng mạng Wi-Fi với iPhone và bạn đã cho phép quyền "Mạng cục bộ (Local Network)" trong Cài đặt iPhone.`,
+  };
+}
+
+/**
+ * Gửi lệnh điều khiển tới TV (Tự động dùng Android TV Remote v2 Port 6466 hoặc Bravia IRCC)
  */
 export async function sendIrcc(
   tvIp: string,
@@ -162,6 +338,18 @@ export async function sendIrcc(
   const cleanIp = normalizeIp(tvIp);
   if (!cleanIp) {
     return { success: false, error: 'Chưa cấu hình địa chỉ IP của TV' };
+  }
+
+  const atvMod = getAndroidTvNativeModule();
+  if (atvMod && activeProtocol === 'androidtv') {
+    try {
+      const res = await atvMod.sendKey(String(codeOrKey));
+      if (res && res.success) {
+        return { success: true };
+      }
+    } catch (e: any) {
+      return { success: false, error: e?.message || 'Lỗi gửi phím tới Android TV' };
+    }
   }
 
   const irccCode = (SONY_IRCC_CODES as Record<string, string>)[codeOrKey] || codeOrKey;
@@ -190,94 +378,14 @@ export async function sendIrcc(
       return { success: true };
     }
 
-    if (response.status === 403 || response.status === 401) {
-      return {
-        success: false,
-        error: 'Chưa ghép nối với TV. Vui lòng vào Cài đặt → Bấm Kết nối để nhập mã PIN trên TV.',
-      };
-    }
-
     return { success: false, error: `Lỗi HTTP ${response.status}` };
   } catch (e: any) {
-    const message =
-      e.name === 'AbortError'
-        ? 'Hết thời gian kết nối tới TV (Timeout)'
-        : e.message || 'Không thể kết nối tới TV';
-    return { success: false, error: message };
+    return { success: false, error: 'Không thể gửi lệnh tới TV' };
   }
 }
 
 /**
- * Kiểm tra kết nối tới TV chỉ bằng địa chỉ IP (và tự động kích hoạt ghép nối mã PIN nếu cần)
- */
-export async function checkTvConnection(
-  tvIp: string,
-  psk: string
-): Promise<{ success: boolean; model?: string; needsPinPairing?: boolean; cookie?: string; error?: string }> {
-  const cleanIp = normalizeIp(tvIp);
-  if (!cleanIp) {
-    return { success: false, error: 'Vui lòng nhập địa chỉ IP của TV' };
-  }
-
-  const url = `http://${cleanIp}/sony/system`;
-  const payload = {
-    method: 'getSystemInformation',
-    id: 1,
-    params: [],
-    version: '1.0',
-  };
-
-  try {
-    const response = await fetchWithTimeout(url, {
-      method: 'POST',
-      headers: buildAuthHeaders(psk, {
-        'Content-Type': 'application/json',
-      }),
-      body: JSON.stringify(payload),
-    });
-
-    if (!response.ok && response.status !== 401 && response.status !== 403) {
-      return { success: false, error: `TV trả về mã lỗi HTTP ${response.status}` };
-    }
-
-    let model = 'Sony BRAVIA KD-49X7500H';
-    try {
-      const data = await response.json();
-      if (data.result && data.result[0] && data.result[0].model) {
-        model = data.result[0].model;
-      }
-    } catch {}
-
-    // Nếu người dùng không nhập PSK, tự động kiểm tra/đăng ký quyền điều khiển qua IP (actRegister)
-    if (!psk || !psk.trim()) {
-      const pairResult = await requestTvPairing(cleanIp);
-      if (pairResult.paired) {
-        return { success: true, model, cookie: pairResult.cookie };
-      }
-      if (pairResult.needsPin) {
-        return {
-          success: false,
-          model,
-          needsPinPairing: true,
-          error: pairResult.error,
-        };
-      }
-      // Nếu TV không yêu cầu accessControl (Authentication = None), vẫn cho phép kết nối thành công
-      return { success: true, model };
-    }
-
-    return { success: true, model };
-  } catch (e: any) {
-    const message =
-      e.name === 'AbortError'
-        ? `Không tìm thấy TV tại địa chỉ IP ${cleanIp}. Hãy kiểm tra TV đang bật và cùng mạng Wi-Fi.`
-        : 'Không thể kết nối. Đảm bảo TV đang bật và iPhone chung mạng Wi-Fi với TV.';
-    return { success: false, error: message };
-  }
-}
-
-/**
- * Lấy danh sách ứng dụng đã cài trên Sony TV qua API /sony/appControl
+ * Lấy danh sách ứng dụng trên TV (Hỗ trợ cả Android TV DeepLink cho KD-49X7500H và /sony/appControl)
  */
 export async function getTvApps(
   tvIp: string,
@@ -285,7 +393,11 @@ export async function getTvApps(
 ): Promise<{ success: boolean; apps: TvAppInfo[]; error?: string }> {
   const cleanIp = normalizeIp(tvIp);
   if (!cleanIp) {
-    return { success: false, apps: [], error: 'Chưa có IP TV' };
+    return { success: false, apps: DEFAULT_ANDROID_TV_APPS, error: 'Chưa có IP TV' };
+  }
+
+  if (activeProtocol === 'androidtv') {
+    return { success: true, apps: DEFAULT_ANDROID_TV_APPS };
   }
 
   const url = `http://${cleanIp}/sony/appControl`;
@@ -306,31 +418,27 @@ export async function getTvApps(
         }),
         body: JSON.stringify(payload),
       },
-      4500
+      3500
     );
 
-    if (!response.ok) {
-      return { success: false, apps: [], error: `Lỗi ${response.status}` };
+    if (response.ok) {
+      const data = await response.json();
+      if (data.result && Array.isArray(data.result[0])) {
+        const apps: TvAppInfo[] = data.result[0].map((item: any) => ({
+          title: item.title,
+          uri: item.uri,
+          icon: item.icon,
+        }));
+        return { success: true, apps };
+      }
     }
+  } catch {}
 
-    const data = await response.json();
-    if (data.result && Array.isArray(data.result[0])) {
-      const apps: TvAppInfo[] = data.result[0].map((item: any) => ({
-        title: item.title,
-        uri: item.uri,
-        icon: item.icon,
-      }));
-      return { success: true, apps };
-    }
-
-    return { success: false, apps: [], error: 'Không đọc được danh sách app từ TV' };
-  } catch (e: any) {
-    return { success: false, apps: [], error: e.message || 'Lỗi kết nối' };
-  }
+  return { success: true, apps: DEFAULT_ANDROID_TV_APPS };
 }
 
 /**
- * Khởi chạy một ứng dụng trên TV theo URI
+ * Khởi chạy một ứng dụng trên TV
  */
 export async function launchTvApp(
   tvIp: string,
@@ -339,6 +447,16 @@ export async function launchTvApp(
 ): Promise<{ success: boolean; error?: string }> {
   const cleanIp = normalizeIp(tvIp);
   if (!cleanIp) return { success: false, error: 'Chưa có IP TV' };
+
+  const atvMod = getAndroidTvNativeModule();
+  if (atvMod && activeProtocol === 'androidtv') {
+    try {
+      await atvMod.launchApp(uri);
+      return { success: true };
+    } catch (e: any) {
+      return { success: false, error: e?.message || 'Không thể mở ứng dụng' };
+    }
+  }
 
   const url = `http://${cleanIp}/sony/appControl`;
   const payload = {
@@ -365,7 +483,7 @@ export async function launchTvApp(
 }
 
 /**
- * Gửi chuỗi ký tự vào ô Text Form của TV Sony
+ * Gửi chuỗi ký tự hoặc Link vào TV
  */
 export async function sendTextToTv(
   tvIp: string,
@@ -374,6 +492,16 @@ export async function sendTextToTv(
 ): Promise<{ success: boolean; error?: string }> {
   const cleanIp = normalizeIp(tvIp);
   if (!cleanIp) return { success: false, error: 'Chưa có IP TV' };
+
+  const atvMod = getAndroidTvNativeModule();
+  if (atvMod && activeProtocol === 'androidtv') {
+    try {
+      await atvMod.sendText(text);
+      return { success: true };
+    } catch (e: any) {
+      return { success: false, error: e?.message || 'Lỗi gửi văn bản tới TV' };
+    }
+  }
 
   const url = `http://${cleanIp}/sony/appControl`;
   const payload = {

@@ -182,24 +182,26 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               )}
             </TouchableOpacity>
 
-            {/* Nếu TV hiện mã PIN 4 số trên màn hình lần đầu ghép nối */}
+            {/* Nếu TV hiện mã ghép nối 6 ký tự (hoặc 4 số) trên màn hình lần đầu ghép nối */}
             {connectionState.needsPinPairing && (
               <View style={styles.pinBox}>
                 <View style={styles.pinHeader}>
                   <KeyRound size={18} color="#FBBF24" style={{ marginRight: 8 }} />
-                  <Text style={styles.pinTitle}>Nhập mã PIN 4 số trên màn hình TV</Text>
+                  <Text style={styles.pinTitle}>Nhập mã ghép nối hiện trên màn hình TV</Text>
                 </View>
                 <Text style={styles.pinDesc}>
-                  TV Sony vừa hiện một mã PIN gồm 4 chữ số trên màn hình. Hãy nhập mã đó vào đây để ghép nối (chỉ cần làm 1 lần đầu):
+                  TV Sony KD-49X7500H vừa hiện một mã ghép nối gồm 6 ký tự (số 0-9 và chữ A-F) trên màn hình. Hãy nhập mã đó vào đây để hoàn tất (chỉ cần làm 1 lần đầu):
                 </Text>
                 <View style={styles.pinInputRow}>
                   <TextInput
                     style={styles.pinInput}
-                    placeholder="Nhập 4 số (VD: 1234)"
+                    placeholder="VD: A1B2C3"
                     placeholderTextColor="#64748B"
                     value={pinCode}
-                    onChangeText={setPinCode}
-                    keyboardType="number-pad"
+                    onChangeText={(txt) => setPinCode(txt.toUpperCase().replace(/[^0-9A-F]/g, ''))}
+                    keyboardType="default"
+                    autoCapitalize="characters"
+                    autoCorrect={false}
                     maxLength={6}
                   />
                   <TouchableOpacity
@@ -284,7 +286,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 3. Xem dòng <Text style={{ fontWeight: '700' }}>Địa chỉ IP (IP address)</Text> (thường có dạng 192.168.1.xxx) và nhập vào ô ở trên.
               </Text>
               <Text style={styles.stepText}>
-                4. Bấm <Text style={{ fontWeight: '700' }}>"Kết nối thử với TV ngay"</Text>. Nếu màn hình TV hiện mã PIN 4 số, nhập 4 số đó vào ứng dụng là hoàn tất!
+                4. Bấm <Text style={{ fontWeight: '700' }}>"Kết nối thử với TV ngay"</Text>. Màn hình TV sẽ hiện mã ghép nối 6 ký tự (0-9, A-F), nhập mã đó vào ứng dụng là hoàn tất!
               </Text>
             </View>
 
