@@ -95,6 +95,9 @@ jobs:
           set -o pipefail
           mkdir -p build dist
 
+          # Ensure modified Swift files are recompiled even when DerivedData cache is restored
+          touch native-modules/android-tv-remote/ios/AndroidTvRemote.swift
+
           echo "Archiving SonyBraviaRemote with IPHONEOS_DEPLOYMENT_TARGET=15.1..."
           xcodebuild -workspace ios/SonyBraviaRemote.xcworkspace \
                      -scheme SonyBraviaRemote \

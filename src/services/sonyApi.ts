@@ -144,10 +144,11 @@ export async function requestTvPairing(
   }
 
   const atvMod = getAndroidTvNativeModule();
-  if (atvMod && pin && pin.trim() && activeProtocol === 'androidtv') {
+  if (atvMod && pin && pin.trim()) {
     try {
       const res = await atvMod.sendPairingCode(pin.trim().toUpperCase());
       if (res && res.success) {
+        activeProtocol = 'androidtv';
         return {
           paired: true,
           model: res.model || 'Sony BRAVIA KD-49X7500H',
@@ -329,7 +330,7 @@ export async function checkTvConnection(
         }
       } catch {}
 
-      if (!psk || !psk.trim()) {
+      if ((!psk || !psk.trim()) && !cachedAuthCookie) {
         const pairResult = await requestTvPairing(cleanIp);
         if (pairResult.paired) {
           return { success: true, model, cookie: pairResult.cookie };

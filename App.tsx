@@ -147,6 +147,7 @@ export default function App() {
         lastError: undefined,
       }));
       fetchApps(ip, settings.psk);
+      setSettingsVisible(false);
     } else {
       setConnectionState((prev) => ({
         ...prev,
@@ -232,9 +233,17 @@ export default function App() {
 
   // Handle Save settings
   const handleSaveSettings = async (newSettings: AppSettings) => {
+    const isSameIpAndPsk =
+      connectionState.isConnected &&
+      newSettings.tvIp.trim() === settings.tvIp.trim() &&
+      newSettings.psk === settings.psk;
+
     setSettings(newSettings);
     await saveSettings(newSettings);
-    testTvConnection(newSettings.tvIp, newSettings.psk);
+
+    if (!isSameIpAndPsk) {
+      testTvConnection(newSettings.tvIp, newSettings.psk);
+    }
   };
 
   // Render tab content
