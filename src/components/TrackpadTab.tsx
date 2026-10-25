@@ -9,8 +9,19 @@ import {
   TextInput,
   KeyboardAvoidingView,
   Platform,
+  Dimensions,
 } from 'react-native';
-import { MousePointer, Keyboard, Send, CornerDownLeft, CheckCircle2, Sliders } from 'lucide-react-native';
+import {
+  MousePointer,
+  Keyboard,
+  Send,
+  CornerDownLeft,
+  CheckCircle2,
+  ChevronUp,
+  ChevronDown,
+  Menu,
+  Sliders,
+} from 'lucide-react-native';
 import { IrccKey } from '../constants/irccCodes';
 import { triggerHaptic } from '../services/haptics';
 
@@ -20,33 +31,50 @@ interface TrackpadTabProps {
   hapticEnabled: boolean;
 }
 
+type SensitivityMode = 'slow' | 'normal' | 'fast';
+
+const SENSITIVITY_THRESHOLDS: Record<SensitivityMode, number> = {
+  slow: 32,
+  normal: 22,
+  fast: 14,
+};
+
 export const TrackpadTab: React.FC<TrackpadTabProps> = ({
   onSendCommand,
   onSendText,
   hapticEnabled,
 }) => {
-  const [lastAction, setLastAction] = useState<string>('Chạm hoặc vuốt để điều khiển');
+  const [lastAction, setLastAction] = useState<string>('Sẵn sàng rê chuột & cuộn');
   const [touchPos, setTouchPos] = useState<{ x: number; y: number } | null>(null);
+  const [isScrolling, setIsScrolling] = useState(false);
+  const [sensitivity, setSensitivity] = useState<SensitivityMode>('normal');
   const [keyboardModalVisible, setKeyboardModalVisible] = useState(false);
   const [inputText, setInputText] = useState('');
   const [isSendingText, setIsSendingText] = useState(false);
 
-  // Gesture accumulation
-  const totalDx = useRef(0);
-  const totalDy = useRef(0);
+  // Gesture accumulators
+  const accumX = useRef(0);
+  const accumY = useRef(0);
+  const scrollAccumY = useRef(0);
   const touchStartTime = useRef(0);
-  const SWIPE_THRESHOLD = 38;
+  const touchStartPos = useRef({ x: 0, y: 0 });
+  const touchCount = useRef(1);
 
-  const panResponder = useRef(
+  // 1. PanResponder cho Bàn rê chính (Trackpad Surface)
+  const padPanResponder = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
       onMoveShouldSetPanResponder: () => true,
 
       onPanResponderGrant: (evt) => {
-        totalDx.current = 0;
-        totalDy.current = 0;
+        accumX.current = 0;
+        accumY.current = 0;
         touchStartTime.current = Date.now();
+        const touches = evt.nativeEvent.touches;
+        touchCount.current = touches ? touches.length : 1;
+
         const { locationX, locationY } = evt.nativeEvent;
+        touchStartPos.current = { x: locationX, y: locationY };
         setTouchPos({ x: locationX, y: locationY });
       },
 
@@ -54,40 +82,59 @@ export const TrackpadTab: React.FC<TrackpadTabProps> = ({
         const { locationX, locationY } = evt.nativeEvent;
         setTouchPos({ x: locationX, y: locationY });
 
-        totalDx.current = gestureState.dx;
-        totalDy.current = gestureState.dy;
-
-        // Check if exceeded swipe threshold
-        if (Math.abs(totalDx.current) > SWIPE_THRESHOLD || Math.abs(totalDy.current) > SWIPE_THRESHOLD) {
-          if (Math.abs(totalDx.current) > Math.abs(totalDy.current)) {
-            // Horizontal swipe
-            if (totalDx.current > 0) {
-              setLastAction('Vuốt sang Phải 👉');
-              triggerHaptic(hapticEnabled, 'light');
-              onSendCommand('Right');
-            } else {
-              setLastAction('Vuốt sang Trái 👈');
-              triggerHaptic(hapticEnabled, 'light');
-              onSendCommand('Left');
-            }
-          } else {
-            // Vertical swipe
-            if (totalDy.current > 0) {
-              setLastAction('Vuốt Xuống 👇');
-              triggerHaptic(hapticEnabled, 'light');
+        // Cử chỉ cuộn 2 ngón tay (Two-finger scroll như MacBook)
+        if (evt.nativeEvent.touches && evt.nativeEvent.touches.length >= 2) {
+          touchCount.current = 2;
+          const scrollDy = gestureState.dy - accumY.current;
+          if (Math.abs(scrollDy) >= 20) {
+            if (scrollDy > 0) {
+              setLastAction('Cuộn trang Xuống 📜');
+              triggerHaptic(hapticEnabled, 'selection');
               onSendCommand('Down');
             } else {
-              setLastAction('Vuốt Lên 👆');
-              triggerHaptic(hapticEnabled, 'light');
+              setLastAction('Cuộn trang Lên 📜');
+              triggerHaptic(hapticEnabled, 'selection');
               onSendCommand('Up');
             }
+            accumY.current = gestureState.dy;
           }
+          return;
+        }
 
-          // Reset delta to allow continuous multi-step swiping
-          totalDx.current = 0;
-          totalDy.current = 0;
-          gestureState.dx = 0;
-          gestureState.dy = 0;
+        // Cử chỉ rê chuột 1 ngón tay (Continuous Glide & Acceleration)
+        const threshold = SENSITIVITY_THRESHOLDS[sensitivity];
+        const dx = gestureState.dx - accumX.current;
+        const dy = gestureState.dy - accumY.current;
+
+        if (Math.abs(dx) >= threshold || Math.abs(dy) >= threshold) {
+          if (Math.abs(dx) > Math.abs(dy)) {
+            // Rê ngang
+            if (dx > 0) {
+              setLastAction('Rê sang Phải 👉');
+              triggerHaptic(hapticEnabled, 'selection');
+              onSendCommand('Right');
+            } else {
+              setLastAction('Rê sang Trái 👈');
+              triggerHaptic(hapticEnabled, 'selection');
+              onSendCommand('Left');
+            }
+            accumX.current = gestureState.dx;
+            // Giảm 1 phần dy để chuyển hướng mượt hơn
+            accumY.current = gestureState.dy * 0.5;
+          } else {
+            // Rê dọc
+            if (dy > 0) {
+              setLastAction('Rê Xuống 👇');
+              triggerHaptic(hapticEnabled, 'selection');
+              onSendCommand('Down');
+            } else {
+              setLastAction('Rê Lên 👆');
+              triggerHaptic(hapticEnabled, 'selection');
+              onSendCommand('Up');
+            }
+            accumY.current = gestureState.dy;
+            accumX.current = gestureState.dx * 0.5;
+          }
         }
       },
 
@@ -96,12 +143,78 @@ export const TrackpadTab: React.FC<TrackpadTabProps> = ({
         const duration = Date.now() - touchStartTime.current;
         const totalDistance = Math.hypot(gestureState.dx, gestureState.dy);
 
-        // Tap detected (click)
-        if (totalDistance < 12 && duration < 280) {
-          setLastAction('Chạm Chọn (OK)');
-          triggerHaptic(hapticEnabled, 'medium');
-          onSendCommand('Confirm');
+        // Tap detected (Click)
+        if (totalDistance < 14 && duration < 260) {
+          if (touchCount.current >= 2) {
+            // Chạm 2 ngón = Chuột Phải (Quay lại / Back)
+            setLastAction('Chuột Phải (Quay lại) ↪️');
+            triggerHaptic(hapticEnabled, 'light');
+            onSendCommand('Return');
+          } else {
+            // Chạm 1 ngón = Chuột Trái (Chọn / OK)
+            setLastAction('Chuột Trái (Chọn / OK) 🔘');
+            triggerHaptic(hapticEnabled, 'medium');
+            onSendCommand('Confirm');
+          }
+          return;
         }
+
+        // Quẹt nhanh có quán tính (Fling / Kinetic momentum)
+        const speed = Math.hypot(gestureState.vx, gestureState.vy);
+        if (speed > 1.35 && totalDistance > 45) {
+          if (Math.abs(gestureState.vx) > Math.abs(gestureState.vy)) {
+            const key = gestureState.vx > 0 ? 'Right' : 'Left';
+            setLastAction(gestureState.vx > 0 ? 'Lướt nhanh sang Phải ⏩' : 'Lướt nhanh sang Trái ⏪');
+            setTimeout(() => {
+              triggerHaptic(hapticEnabled, 'light');
+              onSendCommand(key);
+            }, 90);
+          } else {
+            const key = gestureState.vy > 0 ? 'Down' : 'Up';
+            setLastAction(gestureState.vy > 0 ? 'Lướt nhanh Xuống ⏬' : 'Lướt nhanh Lên ⏫');
+            setTimeout(() => {
+              triggerHaptic(hapticEnabled, 'light');
+              onSendCommand(key);
+            }, 90);
+          }
+        }
+      },
+    })
+  ).current;
+
+  // 2. PanResponder cho Thanh cuộn chuột bên phải (Scroll Wheel Strip)
+  const scrollPanResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: () => true,
+
+      onPanResponderGrant: () => {
+        scrollAccumY.current = 0;
+        setIsScrolling(true);
+        triggerHaptic(hapticEnabled, 'light');
+        setLastAction('Đang lăn con lăn chuột...');
+      },
+
+      onPanResponderMove: (_, gestureState) => {
+        const delta = gestureState.dy - scrollAccumY.current;
+        const scrollStep = 16; // 16px cho mỗi nấc cuộn chuột
+
+        if (Math.abs(delta) >= scrollStep) {
+          if (delta > 0) {
+            setLastAction('Cuộn trang Xuống 📜');
+            triggerHaptic(hapticEnabled, 'selection');
+            onSendCommand('Down');
+          } else {
+            setLastAction('Cuộn trang Lên 📜');
+            triggerHaptic(hapticEnabled, 'selection');
+            onSendCommand('Up');
+          }
+          scrollAccumY.current = gestureState.dy;
+        }
+      },
+
+      onPanResponderRelease: () => {
+        setIsScrolling(false);
       },
     })
   ).current;
@@ -119,16 +232,46 @@ export const TrackpadTab: React.FC<TrackpadTabProps> = ({
     }
   };
 
+  const cycleSensitivity = () => {
+    triggerHaptic(hapticEnabled, 'light');
+    if (sensitivity === 'slow') setSensitivity('normal');
+    else if (sensitivity === 'normal') setSensitivity('fast');
+    else setSensitivity('slow');
+  };
+
+  const getSensitivityLabel = () => {
+    switch (sensitivity) {
+      case 'slow':
+        return 'Chậm';
+      case 'normal':
+        return 'Chuẩn';
+      case 'fast':
+        return 'Nhanh';
+    }
+  };
+
   return (
     <View style={styles.container}>
-      {/* Top Header bar for Trackpad */}
+      {/* Top Header Bar */}
       <View style={styles.topBar}>
         <View style={styles.actionBadge}>
           <MousePointer size={14} color="#38BDF8" style={{ marginRight: 6 }} />
-          <Text style={styles.actionText}>{lastAction}</Text>
+          <Text style={styles.actionText} numberOfLines={1}>
+            {lastAction}
+          </Text>
         </View>
 
-        {/* Floating Quick Keyboard Button */}
+        {/* Nút điều chỉnh tốc độ rê chuột */}
+        <TouchableOpacity
+          style={styles.sensitivityBtn}
+          activeOpacity={0.7}
+          onPress={cycleSensitivity}
+        >
+          <Sliders size={13} color="#94A3B8" style={{ marginRight: 4 }} />
+          <Text style={styles.sensitivityText}>{getSensitivityLabel()}</Text>
+        </TouchableOpacity>
+
+        {/* Nút mở bàn phím gõ text */}
         <TouchableOpacity
           style={styles.keyboardBtn}
           activeOpacity={0.7}
@@ -137,55 +280,107 @@ export const TrackpadTab: React.FC<TrackpadTabProps> = ({
             setKeyboardModalVisible(true);
           }}
         >
-          <Keyboard size={18} color="#F8FAFC" />
-          <Text style={styles.keyboardBtnText}>Bàn phím</Text>
+          <Keyboard size={16} color="#F8FAFC" />
         </TouchableOpacity>
       </View>
 
-      {/* Main Gesture Pad Surface */}
-      <View style={styles.trackpadOuter} {...panResponder.panHandlers}>
-        <View style={styles.gridLines}>
-          <View style={styles.crosshairH} />
-          <View style={styles.crosshairV} />
+      {/* Trackpad Container: Bàn rê chính (trái) + Con lăn cuộn (phải) */}
+      <View style={styles.trackpadRow}>
+        {/* 1. Main Trackpad Area */}
+        <View style={styles.mainPad} {...padPanResponder.panHandlers}>
+          {/* Subtle Grid crosshairs */}
+          <View style={styles.gridLines}>
+            <View style={styles.crosshairH} />
+            <View style={styles.crosshairV} />
+            <View style={styles.centerDot} />
+          </View>
+
+          {/* Glowing Virtual Cursor Dot under user's finger */}
+          {touchPos && (
+            <View
+              style={[
+                styles.cursorFollower,
+                { left: touchPos.x - 22, top: touchPos.y - 22 },
+              ]}
+            >
+              <View style={styles.cursorInner} />
+            </View>
+          )}
+
+          {/* Informative Trackpad Hints */}
+          <View style={styles.padPrompt}>
+            <Text style={styles.promptMain}>Bàn rê chuột cảm ứng</Text>
+            <Text style={styles.promptSub}>• Rê ngón tay để di chuyển chuột</Text>
+            <Text style={styles.promptSub}>• Chạm 1 ngón: Chuột Trái (OK)</Text>
+            <Text style={styles.promptSub}>• Chạm 2 ngón: Chuột Phải (Back)</Text>
+          </View>
         </View>
 
-        {touchPos && (
-          <View
-            style={[
-              styles.touchIndicator,
-              { left: touchPos.x - 28, top: touchPos.y - 28 },
-            ]}
-          />
-        )}
-
-        <View style={styles.padPrompt}>
-          <Text style={styles.promptMain}>Bàn rê cảm ứng Trackpad</Text>
-          <Text style={styles.promptSub}>• Vuốt để điều hướng • Chạm để Chọn (OK)</Text>
-        </View>
-      </View>
-
-      {/* Bottom Trackpad Quick Actions */}
-      <View style={styles.bottomBar}>
-        <TouchableOpacity
-          style={styles.quickAction}
-          onPress={() => {
-            triggerHaptic(hapticEnabled, 'light');
-            onSendCommand('Return');
-          }}
+        {/* 2. Scroll Wheel Strip (Con lăn chuột bên phải) */}
+        <View
+          style={[styles.scrollStrip, isScrolling && styles.scrollStripActive]}
+          {...scrollPanResponder.panHandlers}
         >
-          <CornerDownLeft size={16} color="#94A3B8" />
-          <Text style={styles.quickActionText}>Quay lại (Back)</Text>
-        </TouchableOpacity>
+          <ChevronUp size={16} color={isScrolling ? '#38BDF8' : '#64748B'} />
+          <View style={styles.scrollRidges}>
+            <View style={styles.scrollRidgeLine} />
+            <View style={styles.scrollRidgeLine} />
+            <View style={styles.scrollRidgeLine} />
+            <View style={styles.scrollRidgeLine} />
+            <View style={styles.scrollRidgeLine} />
+          </View>
+          <Text style={styles.scrollLabel}>CUỘN</Text>
+          <ChevronDown size={16} color={isScrolling ? '#38BDF8' : '#64748B'} />
+        </View>
+      </View>
 
+      {/* Bottom Physical Mouse Buttons (Chuột Trái / Menu / Chuột Phải) */}
+      <View style={styles.mouseButtonsRow}>
+        {/* Nút Chuột Trái (Left Click) */}
         <TouchableOpacity
-          style={styles.quickAction}
+          style={styles.leftClickBtn}
+          activeOpacity={0.7}
           onPress={() => {
             triggerHaptic(hapticEnabled, 'medium');
+            setLastAction('Chuột Trái: Chọn (OK)');
             onSendCommand('Confirm');
           }}
         >
-          <CheckCircle2 size={16} color="#38BDF8" />
-          <Text style={[styles.quickActionText, { color: '#38BDF8' }]}>Chọn (OK)</Text>
+          <CheckCircle2 size={18} color="#38BDF8" style={{ marginRight: 8 }} />
+          <View>
+            <Text style={styles.clickTitle}>Chuột Trái</Text>
+            <Text style={styles.clickSubtitle}>Chọn / Mở (OK)</Text>
+          </View>
+        </TouchableOpacity>
+
+        {/* Nút Menu Tùy Chọn */}
+        <TouchableOpacity
+          style={styles.menuClickBtn}
+          activeOpacity={0.7}
+          onPress={() => {
+            triggerHaptic(hapticEnabled, 'light');
+            setLastAction('Tùy chọn (Menu)');
+            onSendCommand('Options');
+          }}
+        >
+          <Menu size={18} color="#E2E8F0" />
+        </TouchableOpacity>
+
+        {/* Nút Chuột Phải (Right Click) */}
+        <TouchableOpacity
+          style={styles.rightClickBtn}
+          activeOpacity={0.7}
+          onPress={() => {
+            triggerHaptic(hapticEnabled, 'light');
+            setLastAction('Chuột Phải: Quay lại (Back)');
+            onSendCommand('Return');
+          }}
+        >
+          <CornerDownLeft size={18} color="#94A3B8" style={{ marginRight: 8 }} />
+          <View>
+            <Text style={styles.rightClickTitle}>Chuột Phải</Text>
+            <Text style={styles.rightClickSubtitle}>Quay lại (Back)</Text>
+          </View>
         </TouchableOpacity>
       </View>
 
@@ -207,7 +402,7 @@ export const TrackpadTab: React.FC<TrackpadTabProps> = ({
             </View>
 
             <Text style={styles.modalDesc}>
-              Nhập từ khóa tìm kiếm (YouTube, Google, tên phim...) và bấm gửi để điền vào ô tìm kiếm trên TV:
+              Gõ từ khóa tìm kiếm (tên phim, YouTube, web...) và bấm gửi để tự động điền vào ô tìm kiếm trên TV:
             </Text>
 
             <TextInput
@@ -249,49 +444,63 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#0A0F1D',
-    padding: 16,
+    padding: 14,
   },
   topBar: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 12,
+    marginBottom: 10,
+    gap: 8,
   },
   actionBadge: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#1E293B',
-    paddingVertical: 8,
+    paddingVertical: 7,
     paddingHorizontal: 12,
-    borderRadius: 16,
+    borderRadius: 14,
     borderWidth: 1,
     borderColor: '#334155',
     flex: 1,
-    marginRight: 10,
   },
   actionText: {
     color: '#E2E8F0',
     fontSize: 12,
     fontWeight: '500',
   },
-  keyboardBtn: {
+  sensitivityBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#0284C7',
-    paddingVertical: 8,
-    paddingHorizontal: 14,
-    borderRadius: 16,
+    backgroundColor: '#1E293B',
+    paddingVertical: 7,
+    paddingHorizontal: 10,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#334155',
   },
-  keyboardBtnText: {
-    color: '#FFFFFF',
-    fontSize: 13,
+  sensitivityText: {
+    color: '#38BDF8',
+    fontSize: 12,
     fontWeight: '600',
-    marginLeft: 6,
   },
-  trackpadOuter: {
+  keyboardBtn: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#0284C7',
+    width: 36,
+    height: 36,
+    borderRadius: 14,
+  },
+  trackpadRow: {
+    flex: 1,
+    flexDirection: 'row',
+    gap: 10,
+  },
+  mainPad: {
     flex: 1,
     backgroundColor: '#111827',
-    borderRadius: 24,
+    borderRadius: 22,
     borderWidth: 2,
     borderColor: '#1F2937',
     position: 'relative',
@@ -303,64 +512,148 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFill,
     justifyContent: 'center',
     alignItems: 'center',
-    opacity: 0.25,
+    opacity: 0.18,
   },
   crosshairH: {
     width: '100%',
     height: 1,
-    backgroundColor: '#475569',
+    backgroundColor: '#64748B',
   },
   crosshairV: {
     height: '100%',
     width: 1,
-    backgroundColor: '#475569',
+    backgroundColor: '#64748B',
     position: 'absolute',
   },
-  touchIndicator: {
+  centerDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#38BDF8',
     position: 'absolute',
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: 'rgba(56, 189, 248, 0.35)',
+    opacity: 0.4,
+  },
+  cursorFollower: {
+    position: 'absolute',
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: 'rgba(56, 189, 248, 0.25)',
     borderWidth: 2,
     borderColor: '#38BDF8',
+    justifyContent: 'center',
+    alignItems: 'center',
+    pointerEvents: 'none',
+  },
+  cursorInner: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#38BDF8',
   },
   padPrompt: {
     alignItems: 'center',
     pointerEvents: 'none',
+    paddingHorizontal: 16,
   },
   promptMain: {
     color: '#94A3B8',
-    fontSize: 16,
-    fontWeight: '600',
-    marginBottom: 6,
+    fontSize: 15,
+    fontWeight: '700',
+    marginBottom: 8,
+    letterSpacing: 0.3,
   },
   promptSub: {
     color: '#64748B',
     fontSize: 12,
+    marginBottom: 4,
   },
-  bottomBar: {
-    flexDirection: 'row',
+  scrollStrip: {
+    width: 44,
+    backgroundColor: '#111827',
+    borderRadius: 18,
+    borderWidth: 1.5,
+    borderColor: '#1F2937',
     justifyContent: 'space-between',
-    marginTop: 12,
-    gap: 12,
+    alignItems: 'center',
+    paddingVertical: 14,
   },
-  quickAction: {
+  scrollStripActive: {
+    borderColor: '#38BDF8',
+    backgroundColor: '#1E293B',
+  },
+  scrollRidges: {
+    gap: 6,
+    alignItems: 'center',
+  },
+  scrollRidgeLine: {
+    width: 14,
+    height: 2,
+    backgroundColor: '#475569',
+    borderRadius: 1,
+  },
+  scrollLabel: {
+    color: '#64748B',
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 1,
+    transform: [{ rotate: '90deg' }],
+  },
+  mouseButtonsRow: {
+    flexDirection: 'row',
+    marginTop: 10,
+    gap: 8,
+  },
+  leftClickBtn: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
     backgroundColor: '#1E293B',
     paddingVertical: 12,
-    borderRadius: 16,
+    paddingHorizontal: 14,
+    borderRadius: 18,
+    borderWidth: 1.5,
+    borderColor: '#0284C7',
+  },
+  clickTitle: {
+    color: '#F8FAFC',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  clickSubtitle: {
+    color: '#38BDF8',
+    fontSize: 11,
+    fontWeight: '500',
+  },
+  menuClickBtn: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#1E293B',
+    width: 48,
+    borderRadius: 18,
     borderWidth: 1,
     borderColor: '#334155',
   },
-  quickActionText: {
-    color: '#94A3B8',
+  rightClickBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1E293B',
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  rightClickTitle: {
+    color: '#E2E8F0',
     fontSize: 13,
-    fontWeight: '600',
-    marginLeft: 8,
+    fontWeight: '700',
+  },
+  rightClickSubtitle: {
+    color: '#94A3B8',
+    fontSize: 11,
+    fontWeight: '500',
   },
   modalOverlay: {
     flex: 1,
