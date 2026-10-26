@@ -137,8 +137,12 @@ jobs:
             exit 1
           fi
 
-          /usr/libexec/PlistBuddy -c "Set :MinimumOSVersion 15.1" "$APP_BUNDLE/Info.plist" || true
-          echo "✅ Verified MinimumOSVersion in Info.plist:"
+          /usr/libexec/PlistBuddy -c "Set :MinimumOSVersion 15.1" "$APP_BUNDLE/Info.plist" || /usr/libexec/PlistBuddy -c "Add :MinimumOSVersion string 15.1" "$APP_BUNDLE/Info.plist"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString 1.0.${{ github.run_number }}" "$APP_BUNDLE/Info.plist" || /usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string 1.0.${{ github.run_number }}" "$APP_BUNDLE/Info.plist"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${{ github.run_number }}" "$APP_BUNDLE/Info.plist" || /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string ${{ github.run_number }}" "$APP_BUNDLE/Info.plist"
+          echo "✅ Verified Version in Info.plist:"
+          /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$APP_BUNDLE/Info.plist"
+          /usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$APP_BUNDLE/Info.plist"
           /usr/libexec/PlistBuddy -c "Print :MinimumOSVersion" "$APP_BUNDLE/Info.plist"
 
           echo "✅ Verified Mach-O LC_BUILD_VERSION (minos):"
@@ -146,6 +150,10 @@ jobs:
 
           echo "✅ Verified embedded JS bundle (main.jsbundle):"
           ls -lh "$APP_BUNDLE/main.jsbundle"
+
+          # Fix permissions cleanly across all files and folders
+          chmod -R u+rwX,go+rX,go-w Payload/
+          chmod +x "$APP_BUNDLE/SonyBraviaRemote"
 
           # Ad-hoc sign all embedded frameworks/dylibs first, then the main app bundle
           if [ -d "$APP_BUNDLE/Frameworks" ]; then
