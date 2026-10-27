@@ -2,7 +2,7 @@
   "expo": {
     "name": "Sony Bravia Remote",
     "slug": "sony-remote",
-    "version": "1.0.19",
+    "version": "1.0.20",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
@@ -10,7 +10,7 @@
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.bravia.remote",
-      "buildNumber": "19",
+      "buildNumber": "20",
       "infoPlist": {
         "MinimumOSVersion": "15.1",
         "NSLocalNetworkUsageDescription": "Ứng dụng cần quyền truy cập mạng nội bộ để kết nối và điều khiển TV Sony BRAVIA.",
