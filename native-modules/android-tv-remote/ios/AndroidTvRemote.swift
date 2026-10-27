@@ -11,6 +11,7 @@ class AndroidTvRemote: RCTEventEmitter {
   private var detectedModel: String = "Sony BRAVIA KD-49X7500H"
   private var isPairedAndConnected: Bool = false
   private var hasListeners: Bool = false
+  private var keepaliveTimer: DispatchSourceTimer?
 
   private var connectResolver: RCTPromiseResolveBlock?
   private var pairingResolver: RCTPromiseResolveBlock?
@@ -50,11 +51,7 @@ class AndroidTvRemote: RCTEventEmitter {
 
   // MARK: - Cert & Managers Setup
 
-  private func ensureManagersInitialized() {
-    if remoteManager != nil && pairingManager != nil {
-      return
-    }
-
+  private func ensureCertificatesWritten() {
     let docDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first ?? FileManager.default.temporaryDirectory
     let derUrl = docDir.appendingPathComponent("sony_atv_cert.der")
     let p12Url = docDir.appendingPathComponent("sony_atv_cert.p12")
@@ -65,6 +62,43 @@ class AndroidTvRemote: RCTEventEmitter {
     if let p12Data = Data(base64Encoded: AndroidTvRemote.certP12Base64) {
       try? p12Data.write(to: p12Url, options: .atomic)
     }
+  }
+
+  private func createFreshRemoteManager() -> RemoteManager {
+    ensureCertificatesWritten()
+    let docDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first ?? FileManager.default.temporaryDirectory
+    let p12Url = docDir.appendingPathComponent("sony_atv_cert.p12")
+
+    let tlsManager = TLSManager {
+      return CertManager().cert(p12Url, "")
+    }
+
+    let rm = RemoteManager(
+      tlsManager,
+      CommandNetwork.DeviceInfo("SonyBraviaRemote", "iPhone", "1.0.0", "com.bravia.remote", "100"),
+      DefaultLogger()
+    )
+
+    // Intercept raw incoming frames to guarantee instant Pong reply even if internal parser misses
+    rm.receiveData = { [weak self] data, _ in
+      guard let self = self, let data = data, !data.isEmpty else { return }
+      self.queue.async {
+        self.replyPongIfPing(data: data)
+      }
+    }
+
+    return rm
+  }
+
+  private func ensureManagersInitialized() {
+    ensureCertificatesWritten()
+    if pairingManager != nil {
+      return
+    }
+
+    let docDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first ?? FileManager.default.temporaryDirectory
+    let derUrl = docDir.appendingPathComponent("sony_atv_cert.der")
+    let p12Url = docDir.appendingPathComponent("sony_atv_cert.p12")
 
     let cryptoManager = CryptoManager()
     cryptoManager.clientPublicCertificate = {
@@ -92,11 +126,6 @@ class AndroidTvRemote: RCTEventEmitter {
     }
 
     pairingManager = PairingManager(tlsManager, cryptoManager, DefaultLogger())
-    remoteManager = RemoteManager(
-      tlsManager,
-      CommandNetwork.DeviceInfo("SonyBraviaRemote", "iPhone", "1.0.0", "com.bravia.remote", "100"),
-      DefaultLogger()
-    )
   }
 
   private func resolveConnectOnce(_ payload: [String: Any]) {
@@ -111,6 +140,47 @@ class AndroidTvRemote: RCTEventEmitter {
       pairingResolver = nil
       resolver(payload)
     }
+  }
+
+  // MARK: - Heartbeat & Keepalive Engine (Prevents Port 6466 Idle Drop)
+
+  private func startKeepaliveTimer() {
+    keepaliveTimer?.cancel()
+    let timer = DispatchSource.makeTimerSource(queue: queue)
+    timer.schedule(deadline: .now() + 8.0, repeating: 8.0)
+    timer.setEventHandler { [weak self] in
+      guard let self = self, self.isPairedAndConnected else { return }
+      // Send a lightweight Pong frame [length: 4, tag: 0x4a, subLen: 2, tag: 0x08, val: 1]
+      let heartbeat: [UInt8] = [0x04, 0x4a, 0x02, 0x08, 0x01]
+      self.remoteManager?.send(Data(heartbeat))
+    }
+    timer.resume()
+    keepaliveTimer = timer
+  }
+
+  private func replyPongIfPing(data: Data) {
+    let bytes = [UInt8](data)
+    guard let pingIndex = bytes.firstIndex(of: 0x42) else { return }
+    // Format: [..., 0x42, subLen, 0x08, <val1 bytes...>]
+    guard bytes.count > pingIndex + 3, bytes[pingIndex + 2] == 0x08 else {
+      let fallbackPong: [UInt8] = [0x04, 0x4a, 0x02, 0x08, 0x01]
+      self.remoteManager?.send(Data(fallbackPong))
+      return
+    }
+
+    var val1Bytes: [UInt8] = []
+    for i in (pingIndex + 3)..<bytes.count {
+      let b = bytes[i]
+      val1Bytes.append(b)
+      if (b & 0x80) == 0 {
+        break
+      }
+    }
+
+    var pongPayload: [UInt8] = [0x4a, UInt8(1 + val1Bytes.count), 0x08]
+    pongPayload.append(contentsOf: val1Bytes)
+    pongPayload.insert(UInt8(pongPayload.count), at: 0)
+    self.remoteManager?.send(Data(pongPayload))
   }
 
   // MARK: - Connect (Port 6466 Remote Control / Port 6467 Pairing)
@@ -130,7 +200,7 @@ class AndroidTvRemote: RCTEventEmitter {
         return
       }
 
-      // If already connected to this exact host, don't drop the connection!
+      // If already connected to this exact host, don't tear down the working connection!
       if self.isPairedAndConnected && self.currentHost == cleanHost {
         resolve([
           "status": "connected",
@@ -143,13 +213,13 @@ class AndroidTvRemote: RCTEventEmitter {
       self.connectResolver = resolve
       self.didTriggerPairingFallback = false
 
-      // Timeout guard after 12 seconds
-      self.queue.asyncAfter(deadline: .now() + 12.0) { [weak self] in
+      // Timeout guard after 10 seconds
+      self.queue.asyncAfter(deadline: .now() + 10.0) { [weak self] in
         guard let self = self else { return }
         if self.connectResolver != nil {
           self.resolveConnectOnce([
             "status": "error",
-            "error": "Hết thời gian kết nối tới TV (\(cleanHost)). Hãy kiểm tra IP TV và Wi-Fi."
+            "error": "Hết thời gian kết nối tới TV (\(cleanHost))."
           ])
         }
       }
@@ -159,13 +229,22 @@ class AndroidTvRemote: RCTEventEmitter {
   }
 
   private func startRemoteSession(host: String) {
-    // Clear callbacks before disconnecting old session to ignore spurious .connectionCanceled errors
+    keepaliveTimer?.cancel()
+    keepaliveTimer = nil
+
+    // Clear old state handlers before tearing down
     remoteManager?.stateChanged = nil
+    remoteManager?.receiveData = nil
     remoteManager?.disconnect()
+
     pairingManager?.stateChanged = nil
     pairingManager?.disconnect()
 
-    remoteManager?.stateChanged = { [weak self] remoteState in
+    // Create a 100% brand new RemoteManager with fresh empty internal buffers
+    let rm = createFreshRemoteManager()
+    self.remoteManager = rm
+
+    rm.stateChanged = { [weak self] remoteState in
       guard let self = self else { return }
       self.queue.async {
         switch remoteState {
@@ -178,6 +257,8 @@ class AndroidTvRemote: RCTEventEmitter {
         case .paired(let runningApp):
           self.isPairedAndConnected = true
           self.setHostMarkedPaired(host, true)
+          self.startKeepaliveTimer()
+
           self.resolveConnectOnce([
             "status": "connected",
             "model": self.detectedModel,
@@ -193,16 +274,25 @@ class AndroidTvRemote: RCTEventEmitter {
               "model": self.detectedModel
             ])
           }
-        case .error(_):
+        case .error(let error):
           self.isPairedAndConnected = false
+          self.keepaliveTimer?.cancel()
+          self.keepaliveTimer = nil
 
-          // CRITICAL FIX: If this host is already marked paired in UserDefaults,
-          // DO NOT connect to port 6467! Port 6467 prompts a new PIN on TV screen.
+          // If connectResolver is actively waiting, resolve immediately so JS can try Port 80
+          if self.connectResolver != nil && self.isHostMarkedPaired(host) {
+            self.resolveConnectOnce([
+              "status": "error",
+              "error": error.localizedDescription
+            ])
+          }
+
+          // If this host is already paired, DO NOT fallback to port 6467!
           if self.isHostMarkedPaired(host) {
-            // Simply reconnect port 6466 after a short delay
+            // Reconnect port 6466 with a fresh instance after 2s
             self.queue.asyncAfter(deadline: .now() + 2.0) { [weak self] in
               guard let self = self, !self.isPairedAndConnected, self.currentHost == host else { return }
-              self.remoteManager?.connect(host)
+              self.startRemoteSession(host: host)
             }
             return
           }
@@ -218,7 +308,7 @@ class AndroidTvRemote: RCTEventEmitter {
       }
     }
 
-    remoteManager?.connect(host)
+    rm.connect(host)
   }
 
   private func startPairingFlow(host: String) {
@@ -286,7 +376,7 @@ class AndroidTvRemote: RCTEventEmitter {
             self.pairingManager?.stateChanged = nil
             self.pairingManager?.disconnect()
 
-            // Small delay to let TV register certificate in keystore, then connect remote session
+            // Connect remote session on port 6466 with clean manager
             self.queue.asyncAfter(deadline: .now() + 0.4) { [weak self] in
               guard let self = self else { return }
               self.startRemoteSession(host: self.currentHost)
@@ -445,8 +535,8 @@ class AndroidTvRemote: RCTEventEmitter {
       }
 
       if !self.isPairedAndConnected && !self.currentHost.isEmpty {
-        self.remoteManager?.connect(self.currentHost)
-        self.queue.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+        self.startRemoteSession(host: self.currentHost)
+        self.queue.asyncAfter(deadline: .now() + 0.6) { [weak self] in
           self?.remoteManager?.send(KeyPress(mappedKey))
           resolve(["success": true])
         }
@@ -560,7 +650,10 @@ class AndroidTvRemote: RCTEventEmitter {
     rejecter reject: @escaping RCTPromiseRejectBlock
   ) {
     queue.async { [weak self] in
+      self?.keepaliveTimer?.cancel()
+      self?.keepaliveTimer = nil
       self?.remoteManager?.stateChanged = nil
+      self?.remoteManager?.receiveData = nil
       self?.remoteManager?.disconnect()
       self?.pairingManager?.stateChanged = nil
       self?.pairingManager?.disconnect()

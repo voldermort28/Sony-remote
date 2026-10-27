@@ -292,15 +292,6 @@ export async function checkTvConnection(
     } catch {}
   }
 
-  // Nếu cổng 8008 tìm thấy "TV phòng khách" nhưng cổng 6467 của TV từ chối bắt tay SSL (Alert 40)
-  if (eurekaTvName) {
-    return {
-      success: false,
-      model: eurekaTvName,
-      error: `Đã tìm thấy "${eurekaTvName}" tại ${cleanIp}, nhưng dịch vụ điều khiển trên TV đang bị kẹt chứng chỉ SSL. Trên TV, bạn vào: Cài đặt -> Ứng dụng -> Xem tất cả ứng dụng -> Hiển thị ứng dụng hệ thống -> chọn "Android TV Remote Service" -> bấm "Xóa dữ liệu (Clear data)", sau đó bấm Kết nối lại!`,
-    };
-  }
-
   // 2. Thử kết nối qua cổng 80 (/sony/system) nếu TV hỗ trợ Bravia HTTP hoặc người dùng nhập PSK
   try {
     const response = await fetchWithTimeout(
@@ -376,7 +367,7 @@ export async function sendIrcc(
         return { success: true };
       }
     } catch (e: any) {
-      return { success: false, error: e?.message || 'Lỗi gửi phím tới Android TV' };
+      // Tự động chuyển tiếp sang Bravia IRCC nếu Android TV Remote tạm gián đoạn
     }
   }
 

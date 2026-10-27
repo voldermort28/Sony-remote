@@ -290,13 +290,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               </Text>
             </View>
 
-            {/* Tùy chọn nâng cao (PSK - Không bắt buộc) */}
+            {/* Tùy chọn nâng cao (PSK - Kết nối vĩnh viễn) */}
             <TouchableOpacity
               style={styles.advancedToggle}
               onPress={() => setShowAdvancedPsk(!showAdvancedPsk)}
             >
               <Text style={styles.advancedToggleText}>
-                Tùy chọn nâng cao: Mã PSK (Không bắt buộc)
+                Tùy chọn: Mã PSK Sony (Kết nối vĩnh viễn không bao giờ ngắt)
               </Text>
               {showAdvancedPsk ? (
                 <ChevronUp size={16} color="#64748B" />
@@ -307,11 +307,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
             {showAdvancedPsk && (
               <View style={styles.fieldGroup}>
+                <Text style={styles.helperText}>
+                  💡 Trên TV Sony, bạn vào: <Text style={{ fontWeight: '700' }}>Cài đặt → Mạng & Internet → Thiết lập mạng gia đình → Điều khiển từ xa qua IP → Khóa chia sẻ trước (Pre-Shared Key)</Text> → đặt là <Text style={{ fontWeight: '700', color: '#38BDF8' }}>1234</Text>, rồi nhập 1234 vào ô dưới:
+                </Text>
                 <View style={styles.inputWrapper}>
                   <ShieldCheck size={18} color="#64748B" style={styles.inputIcon} />
                   <TextInput
                     style={styles.input}
-                    placeholder="Để trống nếu chỉ kết nối bằng IP / Mã PIN"
+                    placeholder="Mã PSK (Ví dụ: 1234) hoặc để trống"
                     placeholderTextColor="#64748B"
                     value={psk}
                     onChangeText={setPsk}
